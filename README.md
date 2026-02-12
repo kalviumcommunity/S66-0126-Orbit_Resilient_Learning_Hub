@@ -27,7 +27,7 @@ orbit/
 
 ![alt text](image.png)
 
-## 🛡️ Quality Assurance & Type Safety (Module 2.9)
+## 🛡️ Quality Assurance & Type Safety
 
 To ensure **Orbit** remains stable in low-connectivity environments where debugging is difficult, we have implemented strict linting and type-checking protocols.
 
@@ -61,3 +61,30 @@ Below is a log showing a successful lint and type-check run:
 > tsc --noEmit
 
 ✔ Type checking completed successfully.
+```
+
+## 🌐 Environment Management
+
+Orbit uses environment variables to manage configurations safely across different environments (Local vs. Production).
+
+### Variable Definitions
+| Variable | Scope | Purpose |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | Server Only | Connection string for our PostgreSQL database (Prisma). |
+| `NEXT_PUBLIC_APP_VERSION` | Client & Server | Displays the current build version in the dashboard. |
+
+### Replication Steps
+To set up your local environment:
+1. Copy the template: `cp .env.example .env.local`
+2. Update the `DATABASE_URL` in `.env.local` with your local PostgreSQL credentials.
+3. Restart your dev server: `npm run dev`.
+
+### Security Best Practices
+* **Zero Secret Leakage:** `.env.local` is strictly ignored by Git to prevent exposing credentials.
+* **Prefix Isolation:** We only use the `NEXT_PUBLIC_` prefix for non-sensitive data to avoid leaking server-side secrets to the client-side PWA.
+
+### Screenshots
+
+![alt text](image-1.png)
+
+![alt text](image-2.png)
