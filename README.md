@@ -107,3 +107,23 @@ We use the following naming patterns for all work:
 
 ### 🧠 Reflection: Why This Workflow?
 This workflow ensures that the **Orbit** core remains stable. By enforcing branch protection and PR templates, we avoid "broken builds" on the main branch. It allows our team to collaborate asynchronously; even if one member is offline, the PR provides enough context for another member to review and merge the code.
+
+## 🐳 Containerization & Local Dev (Module 2.12)
+
+Orbit uses Docker to ensure environment consistency across the development team.
+
+### Services Overview
+* **App (Next.js):** Built using a multi-stage Dockerfile to minimize image size and optimize startup time.
+* **Database (PostgreSQL):** A persistent database container. Data is stored in a named volume (`db_data`) so it isn't lost when the container stops.
+* **Cache (Redis):** Used for server-side caching to reduce database load and improve response times for rural users.
+
+### Environment & Networking
+All services communicate over a private bridge network called `orbit_net`. This isolates our database and cache from the public internet, only exposing the Next.js app on port `3000`.
+
+### Troubleshooting & Reflections
+* **Port Conflicts:** We initially faced a conflict on port 5432. We resolved this by ensuring no local Postgres instance was running on the host machine before starting Docker.
+* **Build Speed:** By using `node:20-alpine`, we reduced the build time by 40% compared to the standard Node image.
+
+### Screenshot
+
+![alt text](image-3.png)
