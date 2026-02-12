@@ -88,3 +88,22 @@ To set up your local environment:
 ![alt text](image-1.png)
 
 ![alt text](image-2.png)
+
+## 🤝 Team Workflow & Branching
+
+To maintain a high velocity while ensuring code quality, Orbit follows a strict professional branching strategy.
+
+### 🌿 Branching Conventions
+We use the following naming patterns for all work:
+* `feature/<module-name>`: For new features (e.g., `feature/offline-sync`)
+* `fix/<bug-name>`: For resolving issues (e.g., `fix/cache-invalidation`)
+* `chore/<task>`: For non-code tasks (e.g., `chore/update-readme`)
+* `docs/<topic>`: For documentation updates.
+
+### 📝 Pull Request (PR) Policy
+* **No Direct Pushes:** All changes must go through a branch and a PR.
+* **Peer Review:** Every PR requires at least one approval from a teammate before merging.
+* **Automated Checks:** PRs cannot be merged unless `npm run lint` and `npm run build` pass successfully.
+
+### 🧠 Reflection: Why This Workflow?
+This workflow ensures that the **Orbit** core remains stable. By enforcing branch protection and PR templates, we avoid "broken builds" on the main branch. It allows our team to collaborate asynchronously; even if one member is offline, the PR provides enough context for another member to review and merge the code.
