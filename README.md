@@ -127,3 +127,15 @@ All services communicate over a private bridge network called `orbit_net`. This 
 ### Screenshot
 
 ![alt text](image-3.png)
+
+## 🗄️ Database Architecture
+
+Orbit utilizes a normalized PostgreSQL relational schema to ensure data integrity and high-performance querying for rural education.
+
+### Schema Explanation
+* **User & Lesson (One-to-Many via Progress):** We use a many-to-many relationship through the `Progress` table. This allows us to track complex data like quiz scores and completion status per student per lesson.
+* **Constraints:** We implemented `ON DELETE CASCADE` on foreign keys. If a student's account is deleted, their progress is automatically cleaned up to prevent orphaned data.
+* **Normalization (3NF):** We separated content (Lessons) from completion status (Progress). This avoids redundancy; lesson data is stored once but referenced by thousands of students.
+
+### Scalability Reflection
+Our use of `cuid()` instead of auto-incrementing integers (`Int`) allows for better horizontal scaling and prevents "ID guessing" security risks. By indexing the `slug` and `email` fields, lookups for specific lessons or user logins remain nearly instantaneous as the database grows.
