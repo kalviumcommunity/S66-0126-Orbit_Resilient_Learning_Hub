@@ -85,9 +85,9 @@ To set up your local environment:
 
 ### Screenshots
 
-![alt text](image-1.png)
+![alt text](images/image-1.png) 
 
-![alt text](image-2.png)
+![alt text](images/image-2.png)
 
 ## 🤝 Team Workflow & Branching
 
@@ -108,7 +108,7 @@ We use the following naming patterns for all work:
 ### 🧠 Reflection: Why This Workflow?
 This workflow ensures that the **Orbit** core remains stable. By enforcing branch protection and PR templates, we avoid "broken builds" on the main branch. It allows our team to collaborate asynchronously; even if one member is offline, the PR provides enough context for another member to review and merge the code.
 
-## 🐳 Containerization & Local Dev (Module 2.12)
+## 🐳 Containerization & Local Dev 
 
 Orbit uses Docker to ensure environment consistency across the development team.
 
@@ -126,7 +126,7 @@ All services communicate over a private bridge network called `orbit_net`. This 
 
 ### Screenshot
 
-![alt text](image-3.png)
+![alt text](images/image-3.png)
 
 ## 🗄️ Database Architecture
 
@@ -139,3 +139,24 @@ Orbit utilizes a normalized PostgreSQL relational schema to ensure data integrit
 
 ### Scalability Reflection
 Our use of `cuid()` instead of auto-incrementing integers (`Int`) allows for better horizontal scaling and prevents "ID guessing" security risks. By indexing the `slug` and `email` fields, lookups for specific lessons or user logins remain nearly instantaneous as the database grows.
+
+## 📝 Migrations & Seeding
+
+Orbit uses Prisma Migrations to manage database version control and Seed scripts to ensure every developer starts with identical test data.
+
+### Workflow Commands
+* **New Migration:** `npx prisma migrate dev --name <description>` - Generates a new SQL file to update the schema.
+* **Reset Database:** `npx prisma migrate reset` - Deletes all data, re-runs migrations, and re-seeds. Use this to start fresh.
+* **Seeding:** `npx prisma db seed` - Populates the database with initial lessons and users.
+
+### Idempotency
+Our seed script uses the `upsert()` function. This ensures that no matter how many times a teammate runs the seed command, it will not create duplicate users or lessons. It simply updates the existing ones if they already exist.
+
+### Data Protection Reflection
+In a production environment, we would never run `migrate reset` as it deletes live data. Instead, we use a **Staging environment** to test migrations before applying them to the production server. We also maintain automated PostgreSQL backups before any major schema changes.
+
+### Screenshots
+
+![alt text](images/image-4.png) 
+
+![alt text](images/image-5.png)
