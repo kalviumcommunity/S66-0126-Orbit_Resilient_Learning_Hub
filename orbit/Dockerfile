@@ -12,6 +12,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # We disable telemetry during the build for privacy
 ENV NEXT_TELEMETRY_DISABLED 1
+# Generate Prisma Client before building
+RUN npx prisma generate
 RUN npm run build
 
 # Stage 3: Runner
@@ -28,6 +30,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+# Copy Prisma files for runtime
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 USER nextjs
 EXPOSE 3000
