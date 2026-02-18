@@ -1,0 +1,72 @@
+
+> orbit@0.1.0 benchmark
+> tsx scripts/benchmark-queries.ts
+
+[dotenv@17.3.1] injecting env (3) from .env.local -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+🚀 Starting Performance Benchmarks
+
+⚠️  Make sure the dev server is running (npm run dev)
+
+📋 Step 1: Enrolling a test user...
+
+✅ User enrolled: cmlrwi4kq0000q9sbhl7em2w3
+   Progress initialized: 10 lessons
+
+📊 Benchmark 1: Student Enrollment Transaction
+
+   ✅ Enrollment Transaction: 18ms
+
+📊 Benchmark 2: Optimized Dashboard Query
+
+   ✅ Dashboard (Optimized): 37ms
+
+📊 Benchmark 3: Unoptimized Dashboard Query (For Comparison)
+
+   ✅ Dashboard (Unoptimized): 26ms
+
+📊 Benchmark 4: Lessons List
+
+   ✅ Lessons List: 7ms
+
+📊 Benchmark 5: Lessons with User Progress
+
+   ✅ Lessons with Progress: 11ms
+
+═══════════════════════════════════════════════════════
+                    BENCHMARK RESULTS                   
+═══════════════════════════════════════════════════════
+
+✅ PASS Enrollment Transaction         18ms
+✅ PASS Dashboard (Optimized)          37ms
+✅ PASS Dashboard (Unoptimized)        26ms
+✅ PASS Lessons List                   7ms
+✅ PASS Lessons with Progress          11ms
+
+═══════════════════════════════════════════════════════
+                 OPTIMIZATION ANALYSIS                  
+═══════════════════════════════════════════════════════
+
+Dashboard Query (Optimized):    37ms
+Dashboard Query (Unoptimized):  26ms
+
+🎯 Performance Improvement:      -42.3%
+⚡ Speed Multiplier:              0.7x faster
+
+═══════════════════════════════════════════════════════
+                   KEY TAKEAWAYS                        
+═══════════════════════════════════════════════════════
+
+✅ Optimizations Applied:
+   • Single query with nested select (no N+1)
+   • Field selection (no over-fetching)
+   • Index usage on userId and lesson.order
+   • Client-side aggregation
+
+❌ Anti-patterns Avoided:
+   • Multiple separate queries (N+1 problem)
+   • Over-fetching with include: true
+   • Full table scans without indexes
+   • Unnecessary data transfer
+
+═══════════════════════════════════════════════════════
+
