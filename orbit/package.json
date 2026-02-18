@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "echo \"No tests yet\" && exit 0",
-    "prepare": "cd .. && husky install orbit/.husky"
+    "prepare": "cd .. && husky install orbit/.husky",
+    "seed": "tsx prisma/seed.ts",
+    "benchmark": "tsx scripts/benchmark-queries.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.0",

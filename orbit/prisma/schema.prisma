@@ -13,6 +13,8 @@ model User {
   password  String     // To be hashed later in Auth module
   progress  Progress[]
   createdAt DateTime   @default(now())
+
+  @@index([email]) // Optimize login/lookup queries
 }
 
 model Lesson {
@@ -23,6 +25,9 @@ model Lesson {
   order       Int        @default(0) // To order lessons correctly
   progress    Progress[]
   updatedAt   DateTime   @updatedAt
+
+  @@index([slug])  // Optimize lesson lookup by slug
+  @@index([order]) // Optimize ordered lesson queries
 }
 
 model Progress {
@@ -36,4 +41,7 @@ model Progress {
   updatedAt  DateTime @updatedAt
 
   @@unique([userId, lessonId]) // One student can have only one progress entry per lesson
+  @@index([userId])            // Optimize user progress queries
+  @@index([completed])         // Optimize completion status queries
+  @@index([userId, completed]) // Composite index for dashboard queries
 }
