@@ -1271,3 +1271,667 @@ In low-connectivity environments:
 - **Type-safe schemas** prevent runtime errors in production environments
 
 ---
+
+## 🔐 Secure Authentication with JWT & Authorization
+
+### Overview
+
+To enable **secure user authentication** and **granular authorization**, we implemented a JWT-based authentication system with bcrypt password hashing. This module provides signup/login endpoints, token generation/validation utilities, and middleware to protect API routes with ownership-based authorization.
+
+### Problem Solved
+
+**Before:**
+- ❌ No authentication system (anyone can access any data)
+- ❌ No way to identify which user is making requests
+- ❌ No authorization checks (users could modify other users' data)
+- ❌ Security vulnerabilities (unprotected personal data)
+
+**After:**
+- ✅ **JWT-based authentication** with 1-hour token expiration
+- ✅ **Secure signup/login endpoints** with bcrypt password hashing
+- ✅ **Token validation middleware** (`withAuth()` HOC)
+- ✅ **Authorization checks** (users can only access their own data)
+- ✅ **Protected API routes** (dashboard, progress, user profile)
+
+### Authentication Architecture
+
+#### JWT Token Flow
+
+```
+┌─────────────┐                                    ┌─────────────┐
+│   Client    │                                    │   Server    │
+│  (Browser)  │                                    │  (Next.js)  │
+└──────┬──────┘                                    └──────┬──────┘
+       │                                                  │
+       │  1. POST /api/auth/signup                       │
+       │     { name, email, password }                   │
+       ├─────────────────────────────────────────────────>│
+       │                                                  │
+       │                                    2. Hash password (bcrypt)
+       │                                    3. Create user in DB
+       │                                    4. Generate JWT token
+       │                                                  │
+       │  5. Return { token, user }                      │
+       │<─────────────────────────────────────────────────┤
+       │                                                  │
+       │  6. Store token (localStorage/sessionStorage)   │
+       │                                                  │
+       │  7. GET /api/users/{id}/dashboard               │
+       │     Authorization: Bearer <token>               │
+       ├─────────────────────────────────────────────────>│
+       │                                                  │
+       │                                    8. Validate JWT
+       │                                    9. Extract userId
+       │                                   10. Check authorization
+       │                                   11. Fetch data
+       │                                                  │
+       │  12. Return dashboard data                      │
+       │<─────────────────────────────────────────────────┤
+       │                                                  │
+```
+
+#### JWT Token Structure
+
+```json
+{
+  "userId": "cmlt8w17n00007msbxb5md86a",
+  "iat": 1708344000,
+  "exp": 1708347600
+}
+```
+
+**Token Format:** `header.payload.signature` (HS256 algorithm)
+
+**Example Token:**
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWx0OHcxN24wMDAwN21zYnhiNW1kODZhIiwiaWF0IjoxNzA4MzQ0MDAwLCJleHAiOjE3MDgzNDc2MDB9.fH8K2p3nM5vQ7xR9wY1zT4uL6sJ8cE0dN2bA7vK9mP4
+│                              │                                                                                                                                │                                              │
+└──────── Header ──────────────┴──────────────────────────────────────────────── Payload ────────────────────────────────────────────────────────────────────────┴──────────── Signature ───────────────────────┘
+```
+
+**Security Notes:**
+- Token signed with `JWT_SECRET` (128-character random string)
+- Expires after 1 hour (`JWT_EXPIRES_IN="1h"`)
+- Minimal payload (only `userId` - fetch other data from DB)
+- Transmitted via `Authorization: Bearer <token>` header
+
+### Authentication Endpoints
+
+#### POST /api/auth/signup
+
+Creates a new user account and returns a JWT token.
+
+**Request:**
+```bash
+curl -X POST http://localhost:3000/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Maria Garcia",
+    "email": "maria@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+**Success Response (201 Created):**
+```json
+{
+  "success": true,
+  "timestamp": "2025-02-19T10:30:00.000Z",
+  "requestId": "req_a1b2c3d4e5",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "cmlt8w17n00007msbxb5md86a",
+      "name": "Maria Garcia",
+      "email": "maria@example.com",
+      "createdAt": "2025-02-19T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+*Duplicate Email (409 Conflict):*
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:30:00.000Z",
+  "requestId": "req_a1b2c3d4e5",
+  "error": {
+    "code": "DUPLICATE_EMAIL",
+    "message": "A user with this email already exists"
+  }
+}
+```
+
+*Validation Error (400 Bad Request):*
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:30:00.000Z",
+  "requestId": "req_a1b2c3d4e5",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": {
+      "fields": {
+        "password": "Password must be at least 8 characters"
+      }
+    }
+  }
+}
+```
+
+#### POST /api/auth/login
+
+Authenticates a user and returns a JWT token.
+
+**Request:**
+```bash
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "maria@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "success": true,
+  "timestamp": "2025-02-19T10:35:00.000Z",
+  "requestId": "req_f6g7h8i9j0",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "cmlt8w17n00007msbxb5md86a",
+      "name": "Maria Garcia",
+      "email": "maria@example.com",
+      "createdAt": "2025-02-19T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error Response (401 Unauthorized):**
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:35:00.000Z",
+  "requestId": "req_f6g7h8i9j0",
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Invalid email or password"
+  }
+}
+```
+
+**Security Note:** The error message is intentionally identical for "user not found" and "wrong password" to prevent email enumeration attacks.
+
+### Protected Endpoints
+
+All protected endpoints require a valid JWT token in the `Authorization` header.
+
+**Request Format:**
+```bash
+curl -X GET http://localhost:3000/api/users/{userId}/dashboard \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+**Protected Endpoints:**
+
+| Method | Endpoint | Description | Authorization Check |
+|--------|----------|-------------|-------------------|
+| `GET` | `/api/users/{userId}/dashboard` | Get user dashboard | User can only access own dashboard |
+| `PATCH` | `/api/users/{userId}` | Update user profile | User can only update own profile |
+| `POST` | `/api/progress` | Create progress record | User can only create own progress |
+| `PATCH` | `/api/progress/{progressId}` | Update progress record | User can only update own progress |
+
+**Error Responses:**
+
+*Missing Token (401 Unauthorized):*
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:40:00.000Z",
+  "requestId": "req_k1l2m3n4o5",
+  "error": {
+    "code": "MISSING_TOKEN",
+    "message": "Authorization token is required"
+  }
+}
+```
+
+*Invalid Token (401 Unauthorized):*
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:40:00.000Z",
+  "requestId": "req_k1l2m3n4o5",
+  "error": {
+    "code": "INVALID_TOKEN",
+    "message": "Invalid or expired token"
+  }
+}
+```
+
+*Authorization Failed (403 Forbidden):*
+```json
+{
+  "success": false,
+  "timestamp": "2025-02-19T10:40:00.000Z",
+  "requestId": "req_k1l2m3n4o5",
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "You can only access your own dashboard"
+  }
+}
+```
+
+### Implementation Details
+
+#### JWT Utilities (`src/lib/auth/jwt.ts`)
+
+```typescript
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+
+/**
+ * Generate a JWT token for a user
+ */
+export function generateToken(userId: string): string {
+  return jwt.sign({ userId }, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+    algorithm: "HS256",
+  });
+}
+
+/**
+ * Verify and decode a JWT token
+ */
+export function verifyToken(token: string): { userId: string } | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      algorithms: ["HS256"],
+    }) as { userId: string };
+    return decoded;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Extract token from Authorization header
+ * Format: "Bearer <token>"
+ */
+export function extractTokenFromHeader(authHeader: string | null): string | null {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+  return authHeader.substring(7);
+}
+```
+
+#### Authentication Middleware (`src/lib/auth/middleware.ts`)
+
+The `withAuth()` higher-order function wraps route handlers to add authentication and inject the authenticated user ID.
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { verifyToken, extractTokenFromHeader } from "./jwt";
+import { apiUnauthorized } from "@/lib/api-response";
+
+type AuthenticatedHandler<T = any> = (
+  request: NextRequest,
+  context: T,
+  authenticatedUserId: string
+) => Promise<NextResponse>;
+
+/**
+ * Higher-order function to protect API routes with JWT authentication
+ * 
+ * Usage:
+ * export const GET = withAuth(async (request, context, userId) => {
+ *   // userId is guaranteed to be valid here
+ *   // Implement your authorization checks
+ * });
+ */
+export function withAuth<T = any>(
+  handler: AuthenticatedHandler<T>
+): (request: NextRequest, context: T) => Promise<NextResponse> {
+  return async (request: NextRequest, context: T) => {
+    const requestId = generateRequestId();
+    
+    // Extract token from Authorization header
+    const authHeader = request.headers.get("authorization");
+    const token = extractTokenFromHeader(authHeader);
+    
+    if (!token) {
+      return apiUnauthorized("Authorization token is required", "MISSING_TOKEN", requestId);
+    }
+    
+    // Verify token
+    const decoded = verifyToken(token);
+    
+    if (!decoded) {
+      return apiUnauthorized("Invalid or expired token", "INVALID_TOKEN", requestId);
+    }
+    
+    // Call the original handler with authenticated user ID
+    return handler(request, context, decoded.userId);
+  };
+}
+```
+
+#### Validation Schemas (`src/lib/schemas/auth.schema.ts`)
+
+```typescript
+import { z } from "zod";
+
+export const signupSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100).trim(),
+  email: z.string().email("Invalid email format").toLowerCase().trim(),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export const loginSchema = z.object({
+  email: z.string().email("Invalid email format").toLowerCase().trim(),
+  password: z.string().min(1, "Password is required"),
+});
+```
+
+### Authorization Pattern
+
+The authorization pattern follows a two-step process:
+
+1. **Authentication:** Validate the JWT token (`withAuth` middleware)
+2. **Authorization:** Verify the user owns the resource they're accessing
+
+**Example: Protected User Profile Update**
+
+```typescript
+// src/app/api/users/[userId]/route.ts
+import { withAuth } from "@/lib/auth/middleware";
+import { apiForbidden } from "@/lib/api-response";
+
+export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
+  const { userId } = await context.params;
+  
+  // Authorization: User can only update their own profile
+  if (userId !== authenticatedUserId) {
+    return apiForbidden("You can only update your own profile", requestId);
+  }
+  
+  // Proceed with update logic...
+  const body = await request.json();
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data: body,
+  });
+  
+  return apiSuccess(updatedUser, requestId);
+});
+```
+
+**Example: Protected Progress Update**
+
+```typescript
+// src/app/api/progress/[progressId]/route.ts
+import { withAuth } from "@/lib/auth/middleware";
+import { apiForbidden } from "@/lib/api-response";
+
+export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
+  const { progressId } = await context.params;
+  
+  // Fetch existing progress record to verify ownership
+  const existingProgress = await prisma.progress.findUnique({
+    where: { id: progressId },
+    select: { userId: true },
+  });
+  
+  if (!existingProgress) {
+    return apiNotFound("Progress record", progressId, requestId);
+  }
+  
+  // Authorization: User can only update their own progress
+  if (existingProgress.userId !== authenticatedUserId) {
+    return apiForbidden("You can only update your own progress", requestId);
+  }
+  
+  // Proceed with update logic...
+  const body = await request.json();
+  const updatedProgress = await prisma.progress.update({
+    where: { id: progressId },
+    data: body,
+  });
+  
+  return apiSuccess(updatedProgress, requestId);
+});
+```
+
+### Client-Side Usage
+
+#### Storing the Token
+
+After successful signup/login, store the token in browser storage:
+
+```javascript
+// Login function
+async function login(email, password) {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  
+  const data = await response.json();
+  
+  if (data.success) {
+    // Store token in localStorage
+    localStorage.setItem('authToken', data.data.token);
+    
+    // Store user data
+    localStorage.setItem('user', JSON.stringify(data.data.user));
+    
+    return data.data;
+  } else {
+    throw new Error(data.error.message);
+  }
+}
+```
+
+#### Making Authenticated Requests
+
+Include the token in the `Authorization` header:
+
+```javascript
+// Fetch user dashboard
+async function getDashboard(userId) {
+  const token = localStorage.getItem('authToken');
+  
+  if (!token) {
+    throw new Error('Not authenticated');
+  }
+  
+  const response = await fetch(`/api/users/${userId}/dashboard`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+  
+  const data = await response.json();
+  
+  if (!data.success) {
+    if (data.error.code === 'INVALID_TOKEN' || data.error.code === 'MISSING_TOKEN') {
+      // Token expired or invalid - redirect to login
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    throw new Error(data.error.message);
+  }
+  
+  return data.data;
+}
+```
+
+#### Handling Token Expiration
+
+```javascript
+// Check if token is expired (decode without verification)
+function isTokenExpired(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const now = Math.floor(Date.now() / 1000);
+    return payload.exp < now;
+  } catch {
+    return true;
+  }
+}
+
+// Automatic token refresh (redirect to login if expired)
+setInterval(() => {
+  const token = localStorage.getItem('authToken');
+  if (token && isTokenExpired(token)) {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+  }
+}, 60000); // Check every minute
+```
+
+### Testing
+
+We created a comprehensive test suite with 19+ test scenarios:
+
+**Run Tests:**
+```bash
+# Make sure Next.js dev server is running
+cd orbit && npm run dev
+
+# In another terminal, run tests
+./test-module-2.20.sh
+```
+
+**Test Scenarios:**
+
+1. ✅ Signup with valid data (returns token)
+2. ✅ Signup with duplicate email (409 Conflict)
+3. ✅ Signup with invalid email format (400 Bad Request)
+4. ✅ Signup with short password (400 Bad Request)
+5. ✅ Login with valid credentials (returns token)
+6. ✅ Login with wrong password (401 Unauthorized)
+7. ✅ Login with non-existent email (401 Unauthorized)
+8. ✅ Access dashboard without token (401 Unauthorized)
+9. ✅ Access dashboard with invalid token (401 Unauthorized)
+10. ✅ Access dashboard with valid token (200 OK)
+11. ✅ Access another user's dashboard (403 Forbidden)
+12. ✅ Update own profile (200 OK)
+13. ✅ Update another user's profile (403 Forbidden)
+14. ✅ Create own progress (201 Created)
+15. ✅ Create progress for another user (403 Forbidden)
+16. ✅ Update own progress (200 OK)
+17. ✅ Update another user's progress (403 Forbidden)
+18. ✅ Verify JWT token structure (3 parts)
+19. ✅ Verify JWT expiration (1 hour)
+
+**Test Output Example:**
+```
+========================================
+SECTION 1: User Signup Tests
+========================================
+
+[TEST 1] Signup with valid data (returns token and user)
+✓ PASS: User created with token (HTTP 201)
+ℹ INFO: User ID: cmlt8w17n00007msbxb5md86a
+ℹ INFO: Token: eyJhbGciOiJIUzI1NiI...
+
+[TEST 2] Signup with duplicate email (409 Conflict)
+✓ PASS: Duplicate email rejected (HTTP 409)
+
+========================================
+TEST SUMMARY
+========================================
+
+Total Tests:  19
+Passed:       19
+Failed:       0
+
+========================================
+ALL TESTS PASSED! ✓
+========================================
+```
+
+### Implementation Statistics
+
+- **Dependencies Added:** `jsonwebtoken@9.0.2`, `@types/jsonwebtoken@9.0.7`
+- **New Files Created:** 6 files (jwt, middleware, auth schemas, signup/login routes, types)
+- **Endpoints Protected:** 4 endpoints (dashboard, user profile, progress create/update)
+- **Authentication Utilities:** 3 functions (generateToken, verifyToken, extractTokenFromHeader)
+- **Test Scenarios:** 19+ comprehensive tests
+- **TypeScript Errors:** ✅ Zero (full strict mode compliance)
+- **Security Vulnerabilities Fixed:** Multiple (unprotected endpoints, no authentication)
+
+### Security Best Practices
+
+#### ✅ Implemented
+
+1. **Strong JWT Secret:** 128-character cryptographically secure random string
+2. **Token Expiration:** 1-hour expiration prevents long-lived token theft
+3. **Bearer Token Transport:** Industry-standard `Authorization: Bearer <token>` header
+4. **Minimal JWT Payload:** Only user ID (reduces token size, fetch other data from DB)
+5. **Password Hashing:** Bcrypt with 10 rounds (~100ms per hash)
+6. **Email Enumeration Prevention:** Same error for "user not found" and "wrong password"
+7. **Authorization Checks:** Database verification before allowing operations
+8. **Error Code Segregation:** 401 for authentication failures, 403 for authorization failures
+
+#### 🔒 Production Recommendations
+
+1. **HTTPS Only:** Always use HTTPS in production (prevents token interception)
+2. **Secure Token Storage:** Consider HttpOnly cookies instead of localStorage (prevents XSS attacks)
+3. **Refresh Tokens:** Implement refresh tokens for longer sessions (beyond MVP)
+4. **Rate Limiting:** Add rate limiting to login endpoint (prevent brute-force attacks)
+5. **Token Blacklisting:** Implement token revocation for logout (requires Redis/database)
+6. **CORS Configuration:** Restrict CORS to known domains
+7. **Security Headers:** Add security headers (CSP, X-Frame-Options, etc.)
+
+### Benefits
+
+#### Security Benefits
+- ✅ **Authentication** - Only authenticated users can access protected routes
+- ✅ **Authorization** - Users can only access their own data
+- ✅ **Password Security** - Bcrypt hashing protects passwords even if DB is compromised
+- ✅ **Token Expiration** - 1-hour expiration limits token theft impact
+- ✅ **No Email Enumeration** - Prevents attackers from discovering valid email addresses
+
+#### User Experience Benefits
+- ✅ **Stateless Authentication** - No server-side sessions (scales horizontally)
+- ✅ **Fast Token Validation** - JWT verification is CPU-only (no database lookup)
+- ✅ **Consistent Error Format** - All auth errors follow same structure
+- ✅ **Clear Error Messages** - Specific error codes (MISSING_TOKEN, INVALID_TOKEN, FORBIDDEN)
+
+#### Developer Experience Benefits
+- ✅ **Reusable Middleware** - `withAuth()` HOC simplifies route protection
+- ✅ **Type-Safe** - Full TypeScript support with strict mode
+- ✅ **Centralized Auth Logic** - All auth utilities in `src/lib/auth/`
+- ✅ **Easy Testing** - Test suite covers all authentication scenarios
+
+### Why This Matters for Rural Education
+
+In offline-first education platforms serving rural areas:
+
+1. **Data Privacy:** Students' personal information and progress data is protected from unauthorized access
+2. **Accountability:** Teachers and administrators can track which students completed which lessons
+3. **Multi-User Devices:** Multiple students can share a device without accessing each other's data
+4. **Offline-First Compatible:** JWT tokens can be validated client-side when offline (with cached user data)
+5. **Low Bandwidth:** JWT tokens are small (~200 bytes) and only sent once per session
+6. **Scalable:** Stateless authentication means no server-side session storage (important for limited infrastructure)
+
+**Real-World Scenario:**
+> Maria and her brother Juan share a tablet at their rural school. With authentication, Maria logs in to see her math progress (85% complete), while Juan logs in later to see his science lessons (60% complete). The system prevents Maria from accidentally modifying Juan's progress, and vice versa. When they sync their offline work, each student's data is correctly attributed to their account.
+
+---

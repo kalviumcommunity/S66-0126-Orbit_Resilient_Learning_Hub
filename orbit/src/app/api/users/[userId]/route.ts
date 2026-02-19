@@ -5,11 +5,13 @@ import {
   apiNotFound,
   apiValidationError,
   apiNoContent,
+  apiForbidden,
   apiServerError,
   handlePrismaError,
 } from "@/lib/api-response";
 import { updateUserSchema } from "@/lib/schemas";
 import { hashPassword } from "@/lib/auth/password";
+import { withAuth } from "@/lib/auth/middleware";
 
 /**
  * GET /api/users/:userId
@@ -91,9 +93,13 @@ export async function GET(
  * PATCH /api/users/:userId
  *
  * Updates an existing user (partial update).
+ * Requires authentication - users can only update their own profile.
  *
  * Path Parameters:
  * - userId: User ID (CUID)
+ *
+ * Request Headers:
+ * - Authorization: Bearer <token>
  *
  * Request Body (at least one field required):
  * {
@@ -103,19 +109,22 @@ export async function GET(
  * }
  *
  * Response: 200 OK with updated user data
- * Error: 400 Bad Request (validation), 404 Not Found, 409 Conflict, 500 Internal Error
+ * Error: 400 Bad Request (validation), 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 500 Internal Error
  *
  * Note: Password updates are allowed but should ideally be handled through
  * a dedicated password change endpoint with proper authentication in production.
  */
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ userId: string }> }
-) {
+export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
   const requestId = generateRequestId();
 
   try {
-    const { userId } = await params;
+    const { userId } = await context.params;
+
+    // Authorization check: users can only update their own profile
+    if (userId !== authenticatedUserId) {
+      return apiForbidden("You can only update your own profile", requestId);
+    }
+
     const body = await request.json();
 
     // Validate request body with Zod schema
@@ -157,7 +166,7 @@ export async function PATCH(
 
     return apiServerError(error, requestId);
   }
-}
+});
 
 /**
  * DELETE /api/users/:userId

@@ -83,6 +83,10 @@ export const ErrorCodes = {
   INVALID_FORMAT: "INVALID_FORMAT",
   OUT_OF_RANGE: "OUT_OF_RANGE",
   INVALID_PARAMETER: "INVALID_PARAMETER",
+  UNAUTHORIZED: "UNAUTHORIZED", // 401 - Authentication required
+  INVALID_TOKEN: "INVALID_TOKEN", // 401 - JWT token invalid/expired
+  MISSING_TOKEN: "MISSING_TOKEN", // 401 - No token provided
+  FORBIDDEN: "FORBIDDEN", // 403 - Insufficient permissions
   NOT_FOUND: "NOT_FOUND",
   RESOURCE_NOT_FOUND: "RESOURCE_NOT_FOUND",
   CONFLICT: "CONFLICT",
@@ -404,6 +408,84 @@ export function apiConflict(
       error: errorObj,
     },
     { status: 409 }
+  );
+}
+
+/**
+ * Returns 401 Unauthorized
+ *
+ * Use when authentication is required but missing or invalid.
+ * Different from 403 (authenticated but lacks permissions).
+ *
+ * @param message - Error message explaining why authentication failed
+ * @param code - Specific error code (default: "UNAUTHORIZED")
+ * @param requestId - Optional request ID
+ * @returns NextResponse with 401 status
+ *
+ * @example
+ * ```typescript
+ * if (!token) {
+ *   return apiUnauthorized("Missing authentication token", "MISSING_TOKEN", requestId);
+ * }
+ * if (!verifyToken(token)) {
+ *   return apiUnauthorized("Invalid or expired token", "INVALID_TOKEN", requestId);
+ * }
+ * ```
+ */
+export function apiUnauthorized(
+  message: string = "Authentication required",
+  code: string = ErrorCodes.UNAUTHORIZED,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code,
+        message,
+      },
+    },
+    { status: 401 }
+  );
+}
+
+/**
+ * Returns 403 Forbidden
+ *
+ * Use when user is authenticated but lacks permission for the resource.
+ * Different from 401 (authentication required) vs 403 (authorization failed).
+ *
+ * @param message - Error message explaining what's forbidden
+ * @param requestId - Optional request ID
+ * @returns NextResponse with 403 status
+ *
+ * @example
+ * ```typescript
+ * if (progress.userId !== authenticatedUserId) {
+ *   return apiForbidden("You can only update your own progress", requestId);
+ * }
+ * if (dashboard.userId !== authenticatedUserId) {
+ *   return apiForbidden("You can only access your own dashboard", requestId);
+ * }
+ * ```
+ */
+export function apiForbidden(
+  message: string,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: ErrorCodes.FORBIDDEN,
+        message,
+      },
+    },
+    { status: 403 }
   );
 }
 
