@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiSuccess,
+  apiNotFound,
+  apiServerError,
+} from "@/lib/api-response";
 
 /**
  * GET /api/users/[userId]/dashboard
@@ -13,9 +18,11 @@ import { NextResponse } from "next/server";
  * 4. Client-side aggregation for statistics
  */
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { userId } = await params;
 
@@ -52,7 +59,7 @@ export async function GET(
     });
 
     if (!dashboardData) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiNotFound("User", userId, requestId);
     }
 
     // Calculate statistics (client-side aggregation - lightweight)
@@ -72,40 +79,37 @@ export async function GET(
         : 0;
 
     // Build response with structured data
-    return NextResponse.json({
-      user: {
-        id: dashboardData.id,
-        name: dashboardData.name,
-        email: dashboardData.email,
-        createdAt: dashboardData.createdAt,
+    return apiSuccess(
+      {
+        user: {
+          id: dashboardData.id,
+          name: dashboardData.name,
+          email: dashboardData.email,
+          createdAt: dashboardData.createdAt,
+        },
+        stats: {
+          totalLessons,
+          completedLessons,
+          incompleteLessons: totalLessons - completedLessons,
+          completionRate:
+            totalLessons > 0
+              ? Math.round((completedLessons / totalLessons) * 100)
+              : 0,
+          averageScore: Math.round(averageScore),
+          totalScores: scoresArray.length,
+        },
+        progress: dashboardData.progress.map((p) => ({
+          id: p.id,
+          completed: p.completed,
+          score: p.score,
+          updatedAt: p.updatedAt,
+          lesson: p.lesson,
+        })),
       },
-      stats: {
-        totalLessons,
-        completedLessons,
-        incompleteLessons: totalLessons - completedLessons,
-        completionRate:
-          totalLessons > 0
-            ? Math.round((completedLessons / totalLessons) * 100)
-            : 0,
-        averageScore: Math.round(averageScore),
-        totalScores: scoresArray.length,
-      },
-      progress: dashboardData.progress.map((p) => ({
-        id: p.id,
-        completed: p.completed,
-        score: p.score,
-        updatedAt: p.updatedAt,
-        lesson: p.lesson,
-      })),
-    });
+      requestId
+    );
   } catch (error) {
     console.error("Dashboard query failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch dashboard data",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

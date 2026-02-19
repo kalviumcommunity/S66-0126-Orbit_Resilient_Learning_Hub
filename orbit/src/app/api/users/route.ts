@@ -1,5 +1,14 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiPaginated,
+  apiCreated,
+  apiValidationError,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
+import { createUserSchema } from "@/lib/schemas";
+import { hashPassword } from "@/lib/auth/password";
 
 /**
  * GET /api/users
@@ -20,6 +29,8 @@ import { NextResponse } from "next/server";
  * Note: Password field is excluded for security.
  */
 export async function GET(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -60,25 +71,20 @@ export async function GET(request: Request) {
       take: limit,
     });
 
-    return NextResponse.json({
-      data: users,
-      pagination: {
+    return apiPaginated(
+      users,
+      {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
         hasMore: skip + users.length < total,
       },
-    });
+      requestId
+    );
   } catch (error) {
     console.error("[API] GET /api/users failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch users",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -89,52 +95,43 @@ export async function GET(request: Request) {
  *
  * Request Body:
  * {
- *   name: string,
- *   email: string (unique),
- *   password: string (will be hashed in Auth module)
+ *   name: string (1-100 chars),
+ *   email: string (valid email, unique),
+ *   password: string (min 8 chars)
  * }
  *
  * Response: 201 Created with user data
- * Error: 400 Bad Request, 409 Conflict (duplicate email), 500 Internal Error
+ * Error: 400 Bad Request (validation), 409 Conflict (duplicate email), 500 Internal Error
+ *
+ * Security: Passwords are hashed with bcrypt (10 rounds) before storage.
  *
  * Note: This is a basic user creation endpoint.
  * The enrollment endpoint (/api/users/enroll) includes
  * automatic progress initialization for all lessons.
  */
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const body = await request.json();
-    const { name, email, password } = body;
 
-    // Validate required fields
-    if (!name || !email || !password) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "name, email, and password are required",
-        },
-        { status: 400 }
-      );
+    // Validate request body with Zod schema
+    const validationResult = createUserSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Invalid email format",
-        },
-        { status: 400 }
-      );
-    }
+    const { name, email, password } = validationResult.data;
+
+    // Hash password before storage
+    const hashedPassword = await hashPassword(password);
 
     // Create user
     const user = await prisma.user.create({
       data: {
         name,
         email,
-        password, // Note: In Auth module, this will be hashed with bcrypt
+        password: hashedPassword,
       },
       select: {
         id: true,
@@ -144,38 +141,14 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(
-      {
-        message: "User created successfully",
-        data: user,
-      },
-      { status: 201 }
-    );
+    return apiCreated(user, "User created successfully", requestId);
   } catch (error) {
     console.error("[API] POST /api/users failed:", error);
 
-    // Handle unique constraint violation (duplicate email)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Conflict",
-          message: "Email already exists",
-        },
-        { status: 409 }
-      );
-    }
+    // Try Prisma error handler first (handles P2002 duplicate email)
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    return NextResponse.json(
-      {
-        error: "Failed to create user",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

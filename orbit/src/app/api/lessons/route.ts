@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiPaginated,
+  apiServerError,
+} from "@/lib/api-response";
 
 /**
  * GET /api/lessons
@@ -29,6 +33,8 @@ import { NextResponse } from "next/server";
  * - Indexed ordering on Lesson.order
  */
 export async function GET(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -71,20 +77,21 @@ export async function GET(request: Request) {
         take: limit,
       });
 
-      return NextResponse.json({
-        data: lessons.map((lesson) => ({
+      return apiPaginated(
+        lessons.map((lesson) => ({
           ...lesson,
           userProgress: lesson.progress[0] || null,
           progress: undefined, // Remove the array wrapper
         })),
-        pagination: {
+        {
           page,
           limit,
           total,
           totalPages: Math.ceil(total / limit),
           hasMore: skip + lessons.length < total,
         },
-      });
+        requestId
+      );
     }
 
     // Default: Return lessons without user progress
@@ -103,24 +110,19 @@ export async function GET(request: Request) {
       take: limit,
     });
 
-    return NextResponse.json({
-      data: lessons,
-      pagination: {
+    return apiPaginated(
+      lessons,
+      {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
         hasMore: skip + lessons.length < total,
       },
-    });
+      requestId
+    );
   } catch (error) {
     console.error("[API] GET /api/lessons failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch lessons",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

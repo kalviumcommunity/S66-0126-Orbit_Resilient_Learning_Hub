@@ -637,3 +637,637 @@ We tested all 17 endpoints and captured 21 response files:
 5. **Maintainability** - 1:1 mapping with Prisma models reduces cognitive load
 
 ---
+
+## 📦 Global API Response Utility
+
+### Overview
+
+To improve **production observability** and **frontend predictability**, we implemented a centralized API response utility that enforces a consistent "envelope" structure across all 15 API endpoints. This standardization ensures every response includes traceability metadata and follows a uniform format.
+
+### Problem Solved
+
+**Before:**
+- Inconsistent response formats across endpoints
+- No request tracing (debugging production issues was difficult)
+- Manual error handling with inconsistent error codes
+- Different patterns for pagination, errors, and success responses
+
+**After:**
+- ✅ **100% consistent** response envelope across all endpoints
+- ✅ **Full traceability** with unique request IDs in every response
+- ✅ **Standardized error codes** in UPPER_SNAKE_CASE format
+- ✅ **Type-safe** helpers with full TypeScript support
+- ✅ **Production ready** with timestamps in ISO 8601 format
+
+### Response Envelope Structure
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T07:31:23.498Z",
+  "requestId": "8c36f47a-cea7-4de6-a92a-4bebf19c1d01",
+  "data": {
+    "id": "cmlrtkpu400016zsbfm1c2vy1",
+    "title": "Introduction to Offline Web Apps",
+    "slug": "intro-to-offline-apps",
+    "order": 1
+  }
+}
+```
+
+#### Error Response (400/404/409/500)
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T07:32:02.629Z",
+  "requestId": "f6d8f696-004e-40e9-acae-1378edf1f75c",
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Either userId or lessonId parameter is required"
+  }
+}
+```
+
+#### Paginated Response (200 OK)
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T07:31:23.498Z",
+  "requestId": "8c36f47a-cea7-4de6-a92a-4bebf19c1d01",
+  "data": [ /* array of items */ ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 42,
+    "totalPages": 5,
+    "hasMore": true
+  }
+}
+```
+
+#### Delete Response (204 No Content)
+```
+HTTP/1.1 204 No Content
+X-Request-Id: 78972255-6503-4aaf-a1d8-d8e924796118
+X-Success: true
+X-Timestamp: 2026-02-19T07:33:30.503Z
+```
+
+### Utility Functions
+
+The response utility (`src/lib/api-response.ts`) provides 14 helper functions:
+
+**Success Helpers:**
+- `apiSuccess<T>(data, requestId?)` - 200 OK with data
+- `apiCreated<T>(data, message?, requestId?)` - 201 Created
+- `apiNoContent(requestId?)` - 204 No Content with headers
+- `apiPaginated<T>(data[], pagination, requestId?)` - 200 OK with pagination
+
+**Error Helpers:**
+- `apiBadRequest(message, details?, requestId?)` - 400 Bad Request
+- `apiNotFound(resource, identifier?, requestId?)` - 404 Not Found
+- `apiConflict(message, details?, requestId?)` - 409 Conflict
+- `apiServerError(error, requestId?)` - 500 Internal Server Error
+
+**Validation Helpers:**
+- `apiMissingField(fieldName, requestId?)` - 400 for missing fields
+- `apiInvalidFormat(fieldName, expectedFormat, requestId?)` - 400 for format errors
+- `apiOutOfRange(fieldName, min, max, requestId?)` - 400 for range errors
+
+**Prisma Error Handler:**
+- `handlePrismaError(error, requestId?)` - Handles P2025, P2002, P2003 errors
+
+**Core Utility:**
+- `generateRequestId()` - Generates UUID v4 for request tracing
+
+### Standardized Error Codes
+
+All error codes use **UPPER_SNAKE_CASE** format:
+
+| Code | Status | Description |
+|------|--------|-------------|
+| `BAD_REQUEST` | 400 | Invalid request parameters |
+| `MISSING_REQUIRED_FIELD` | 400 | Required field missing |
+| `INVALID_FORMAT` | 400 | Field format incorrect |
+| `OUT_OF_RANGE` | 400 | Numeric value out of bounds |
+| `NOT_FOUND` | 404 | Resource doesn't exist |
+| `CONFLICT` | 409 | Duplicate entry/constraint violation |
+| `PRISMA_RECORD_NOT_FOUND` | 404 | Prisma P2025 error |
+| `PRISMA_UNIQUE_VIOLATION` | 409 | Prisma P2002 error |
+| `PRISMA_FOREIGN_KEY_VIOLATION` | 400 | Prisma P2003 error |
+| `INTERNAL_SERVER_ERROR` | 500 | Unexpected server error |
+
+### Implementation Statistics
+
+- **Endpoints Refactored:** 15 methods across 8 files
+- **Test Cases:** 20 comprehensive test scenarios
+- **Response Format:** 100% consistent across all endpoints
+- **Type Safety:** Full TypeScript strict mode compliance
+- **Build Status:** ✅ Zero TypeScript errors
+
+### Refactored Endpoints
+
+| Endpoint | Methods | Status |
+|----------|---------|--------|
+| `/api/lessons` | GET | ✅ Refactored |
+| `/api/lessons/[identifier]` | GET | ✅ Refactored |
+| `/api/progress` | GET, POST | ✅ Refactored |
+| `/api/progress/[progressId]` | GET, PATCH, DELETE | ✅ Refactored |
+| `/api/users` | GET, POST | ✅ Refactored |
+| `/api/users/[userId]` | GET, PATCH, DELETE | ✅ Refactored |
+| `/api/users/[userId]/dashboard` | GET | ✅ Refactored |
+| `/api/users/enroll` | POST | ✅ Refactored |
+
+### Example: Before and After
+
+**Before (Inconsistent):**
+```typescript
+// Endpoint 1
+return NextResponse.json({ data: user });
+
+// Endpoint 2
+return NextResponse.json({ user });
+
+// Endpoint 3
+return NextResponse.json({ result: lesson, message: "Success" });
+
+// Error handling - all different
+return NextResponse.json({ error: "Not found" }, { status: 404 });
+return NextResponse.json({ message: "User not found" }, { status: 404 });
+return NextResponse.json({ error: { message: "Not found" } }, { status: 404 });
+```
+
+**After (Consistent):**
+```typescript
+// Generate request ID once at the start
+const requestId = generateRequestId();
+
+// All success responses follow same pattern
+return apiSuccess(user, requestId);
+return apiSuccess(lesson, requestId);
+return apiCreated(newUser, "User created successfully", requestId);
+
+// All errors follow same pattern
+return apiNotFound("User", userId, requestId);
+return apiBadRequest("Invalid email format", undefined, requestId);
+return apiServerError(error, requestId);
+```
+
+### Testing & Evidence
+
+All 15 endpoints were tested with 20 test scenarios. Evidence captured:
+
+**Test Files:**
+- `orbit/api-evidence/responses-v2/test-all-endpoints.sh` - Automated test script
+- `orbit/api-evidence/responses-v2/*.json` - 20 actual response captures
+- `orbit/api-evidence/RESPONSE-UTILITY-GUIDE.md` - Complete developer guide (3,500+ words)
+
+**Test Coverage:**
+- ✅ Success responses (200, 201, 204)
+- ✅ Client errors (400, 404, 409)
+- ✅ Server errors (500)
+- ✅ Pagination responses
+- ✅ Validation error responses
+- ✅ Prisma error handling
+- ✅ Request ID tracing
+
+### Benefits for Production
+
+1. **Observability** - Every request is traceable via `requestId`
+2. **Debugging** - Logs can be filtered by request ID to track full request lifecycle
+3. **Frontend Predictability** - Clients always know response structure
+4. **Error Handling** - Consistent error codes enable centralized error handling
+5. **Type Safety** - TypeScript interfaces prevent response format drift
+6. **Maintainability** - Single source of truth for all response formats
+
+### Why This Matters for Rural Education
+
+In low-connectivity environments:
+- **Request tracing** helps debug sync issues when students come online
+- **Consistent errors** make offline error handling predictable
+- **Timestamps** help resolve data conflicts when multiple devices sync
+- **Type safety** prevents runtime errors in production (no internet = no remote debugging)
+
+---
+
+## 🛡️ Input Validation & Data Sanitization
+
+### Overview
+
+To ensure **data integrity** and **security** in offline-first environments, we implemented comprehensive input validation using **Zod** schemas and **bcrypt** password hashing. This module addresses the critical security vulnerability of plaintext password storage and adds robust validation to prevent malformed data from reaching the database.
+
+### Problem Solved
+
+**Before:**
+- ❌ Passwords stored in plaintext (critical security vulnerability)
+- ❌ Manual validation with inconsistent error messages
+- ❌ 409 Conflict errors on duplicate progress records during offline sync
+- ❌ No CUID format validation (malformed IDs reached database)
+- ❌ Validation errors returned one-by-one (poor UX)
+
+**After:**
+- ✅ **Passwords hashed with bcrypt** (10 rounds, ~100ms per hash)
+- ✅ **Zod schema validation** for all POST/PATCH endpoints
+- ✅ **UPSERT patterns** for offline sync (no more 409 errors!)
+- ✅ **Strict CUID validation** with regex (`^c[a-z0-9]{24}$`)
+- ✅ **Grouped validation errors** (all errors in single response)
+
+### Security Enhancement: Password Hashing
+
+We implemented bcrypt password hashing to fix the critical plaintext password vulnerability.
+
+**Implementation** (`src/lib/auth/password.ts`):
+```typescript
+import bcrypt from "bcrypt";
+
+const SALT_ROUNDS = 10; // 2^10 = 1,024 iterations
+
+export async function hashPassword(plainPassword: string): Promise<string> {
+  return bcrypt.hash(plainPassword, SALT_ROUNDS);
+}
+
+export async function verifyPassword(
+  plainPassword: string,
+  hashedPassword: string
+): Promise<boolean> {
+  return bcrypt.compare(plainPassword, hashedPassword);
+}
+```
+
+**Usage in Endpoints:**
+```typescript
+// POST /api/users
+const { name, email, password } = validatedData;
+const hashedPassword = await hashPassword(password); // Hash before storage
+
+const user = await prisma.user.create({
+  data: { name, email, password: hashedPassword }
+});
+```
+
+**Bcrypt Hash Format:**
+```
+$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+│  │  │  └─────────────── Hash (31 chars)
+│  │  └─────────────────── Salt (22 chars)
+│  └────────────────────── Cost factor (10)
+└───────────────────────── Algorithm identifier ($2b = bcrypt)
+```
+
+### Validation Architecture
+
+We created centralized Zod schemas in `src/lib/schemas/`:
+
+**Directory Structure:**
+```
+src/lib/schemas/
+├── index.ts           # Centralized exports
+├── user.schema.ts     # User validation
+├── progress.schema.ts # Progress validation (with CUID regex)
+├── lesson.schema.ts   # Lesson validation (future use)
+└── README.md          # Schema documentation
+```
+
+**Example Schema** (`user.schema.ts`):
+```typescript
+import { z } from "zod";
+
+export const createUserSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+  email: z.string().email().toLowerCase().trim(),
+  password: z.string().min(8),
+});
+
+export const updateUserSchema = z.object({
+  name: z.string().min(1).max(100).trim().optional(),
+  email: z.string().email().toLowerCase().trim().optional(),
+  password: z.string().min(8).optional(),
+}).refine((data) => data.name || data.email || data.password, {
+  message: "At least one field must be provided",
+});
+
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+```
+
+### CUID Validation
+
+Progress schemas use strict CUID format validation to catch malformed IDs early:
+
+```typescript
+const cuidRegex = /^c[a-z0-9]{24}$/;
+
+export const createProgressSchema = z.object({
+  userId: z.string().regex(cuidRegex, "Invalid user ID format"),
+  lessonId: z.string().regex(cuidRegex, "Invalid lesson ID format"),
+  completed: z.boolean(),
+  score: z.number().int().min(0).max(100).nullable().optional(),
+});
+```
+
+**Valid CUID:** `c12345678901234567890123` (starts with 'c' + 24 alphanumeric chars)  
+**Invalid Examples:**
+- `invalid-id` - Wrong format
+- `12345678901234567890123` - Missing 'c' prefix
+- `c12345` - Too short
+
+### Upsert Patterns for Offline Sync
+
+**The Problem:** Rural students may be offline for days. When they come back online, their device attempts to sync the same progress record multiple times, resulting in 409 Conflict errors and data loss.
+
+**The Solution:** Use Prisma's `upsert()` operation to update existing records instead of failing.
+
+#### POST /api/progress (Upsert Implementation)
+
+**Before (caused 409 errors):**
+```typescript
+const progress = await prisma.progress.create({
+  data: { userId, lessonId, completed, score }
+});
+// Fails with 409 if record already exists!
+```
+
+**After (upsert):**
+```typescript
+const progress = await prisma.progress.upsert({
+  where: {
+    userId_lessonId: { userId, lessonId } // Composite unique key
+  },
+  update: {
+    completed,
+    score,
+    updatedAt: new Date()
+  },
+  create: {
+    userId,
+    lessonId,
+    completed,
+    score
+  }
+});
+// ✅ Creates if new, updates if exists!
+```
+
+#### POST /api/users/enroll (Transaction with Upsert)
+
+**Before (transaction failed on re-enrollment):**
+```typescript
+await prisma.$transaction(async (tx) => {
+  const user = await tx.user.create({ data: { name, email, password } });
+  // ❌ Fails if user already exists
+  
+  await tx.progress.createMany({ data: progressRecords });
+  // ❌ Fails if progress already exists
+});
+```
+
+**After (transaction with upsert):**
+```typescript
+await prisma.$transaction(async (tx) => {
+  // Upsert user (create or update on email)
+  const user = await tx.user.upsert({
+    where: { email },
+    update: { name, password: hashedPassword },
+    create: { name, email, password: hashedPassword }
+  });
+  
+  // Upsert progress for each lesson
+  await Promise.all(
+    allLessons.map((lesson) =>
+      tx.progress.upsert({
+        where: {
+          userId_lessonId: {
+            userId: user.id,
+            lessonId: lesson.id
+          }
+        },
+        update: {}, // Keep existing progress
+        create: { userId: user.id, lessonId: lesson.id, completed: false, score: null }
+      })
+    )
+  );
+});
+// ✅ Safe to call multiple times!
+```
+
+### Validation Error Responses
+
+Validation errors are grouped into a single response for better UX:
+
+**Example: Multiple validation errors**
+```bash
+curl -X POST "http://localhost:3000/api/users" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"not-an-email","password":"short"}'
+```
+
+**Response:**
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T09:14:49.902Z",
+  "requestId": "8fa53d7a-3e0f-421c-a0cf-69aacd057f14",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": {
+      "fields": {
+        "name": "Invalid input: expected string, received undefined",
+        "email": "Invalid email format",
+        "password": "Password must be at least 8 characters"
+      }
+    }
+  }
+}
+```
+
+### Validation Rules Summary
+
+#### User Validation
+| Field | Create | Update | Rules |
+|-------|--------|--------|-------|
+| `name` | Required | Optional | 1-100 chars, trimmed |
+| `email` | Required | Optional | Valid email, lowercase, trimmed |
+| `password` | Required | Optional | Min 8 chars, hashed with bcrypt |
+
+**Update Rule:** At least one field must be provided
+
+#### Progress Validation
+| Field | Create | Update | Rules |
+|-------|--------|--------|-------|
+| `userId` | Required | N/A | CUID format (`^c[a-z0-9]{24}$`) |
+| `lessonId` | Required | N/A | CUID format (`^c[a-z0-9]{24}$`) |
+| `completed` | Required | Optional | Boolean |
+| `score` | Optional | Optional | Integer 0-100 or null |
+
+**Update Rule:** At least one field must be provided
+
+### Refactored Endpoints
+
+We added validation and password hashing to 5 endpoints (10 HTTP methods):
+
+| Endpoint | Method | Changes |
+|----------|--------|---------|
+| `/api/users` | POST | ✅ Zod validation + bcrypt hashing + keep 409 |
+| `/api/users/:userId` | PATCH | ✅ Zod validation + bcrypt hashing |
+| `/api/progress` | POST | ✅ Zod validation + **UPSERT** |
+| `/api/progress/:progressId` | PATCH | ✅ Zod validation |
+| `/api/users/enroll` | POST | ✅ Zod validation + bcrypt + **UPSERT** |
+
+**Key Change:** POST /api/progress and POST /api/users/enroll now use **upsert** to prevent 409 Conflict errors during offline sync.
+
+### Test Results
+
+We created a comprehensive test suite (`orbit/test-module-2.19.sh`) with 13 test scenarios:
+
+```bash
+cd orbit && ./test-module-2.19.sh
+```
+
+**Test Coverage:**
+1. ✅ Create user with valid data (password hashed)
+2. ✅ Validation error: missing required field (name)
+3. ✅ Validation error: invalid email format
+4. ✅ Validation error: password too short
+5. ✅ Create progress with valid data
+6. ✅ **Upsert behavior: update same progress record (no 409!)**
+7. ✅ Validation error: invalid userId CUID format
+8. ✅ Validation error: score out of range (150)
+9. ✅ Update user with valid data
+10. ✅ Validation error: no fields provided in PATCH
+11. ✅ Enroll student with UPSERT (new user)
+12. ✅ **Re-enroll same user (UPSERT behavior test - no 409!)**
+13. ✅ Password is hashed in database (bcrypt format verified)
+
+**All tests passed successfully!**
+
+### Example Test Results
+
+**Test 5: Create progress with valid data**
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T09:14:50.304Z",
+  "requestId": "0be805fe-18f5-4f57-a969-784ce7edcc14",
+  "data": {
+    "id": "cmlt8w1mc00017msble3k16em",
+    "userId": "cmlt8w17n00007msbxb5md86a",
+    "lessonId": "cmlrtkpu400016zsbfm1c2vy1",
+    "completed": true,
+    "score": 95,
+    "updatedAt": "2026-02-19T09:14:50.287Z"
+  },
+  "message": "Progress synced successfully"
+}
+```
+
+**Test 6: Upsert behavior (update same progress record)**
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T09:14:50.364Z",
+  "requestId": "9aaa6513-5e4d-4d73-bcbd-1961ba61b1b4",
+  "data": {
+    "id": "cmlt8w1mc00017msble3k16em",
+    "userId": "cmlt8w17n00007msbxb5md86a",
+    "lessonId": "cmlrtkpu400016zsbfm1c2vy1",
+    "completed": true,
+    "score": 100, // ✅ Updated from 95 to 100
+    "updatedAt": "2026-02-19T09:14:50.339Z"
+  },
+  "message": "Progress synced successfully"
+}
+```
+
+**Notice:** Same `id` and `userId_lessonId` pair, but score updated from 95 to 100. No 409 Conflict error!
+
+**Test 7: Invalid CUID format**
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T09:14:50.422Z",
+  "requestId": "79c00c8c-f005-47fa-8c6d-135a36ce98c3",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": {
+      "fields": {
+        "userId": "Invalid user ID format. Must be a valid CUID (e.g., c12345678901234567890123)"
+      }
+    }
+  }
+}
+```
+
+### API Response Utility Integration
+
+We extended the `api-response.ts` utility with a new validation error handler:
+
+```typescript
+import { ZodError } from "zod";
+
+export function apiValidationError(
+  zodError: ZodError<unknown>,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  const fields: Record<string, string> = {};
+  
+  zodError.issues.forEach((issue) => {
+    const fieldPath = issue.path.join(".");
+    fields[fieldPath] = issue.message;
+  });
+
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: ErrorCodes.VALIDATION_ERROR,
+        message: "Request validation failed",
+        details: { fields }
+      }
+    },
+    { status: 400 }
+  );
+}
+```
+
+### Implementation Statistics
+
+- **Dependencies Added:** `zod@4.3.6`, `bcrypt@5.1.1`, `@types/bcrypt@5.0.2`
+- **Schema Files Created:** 4 files (`user`, `progress`, `lesson`, `index`)
+- **Endpoints Refactored:** 5 endpoints (10 HTTP methods)
+- **Test Scenarios:** 13 comprehensive tests
+- **TypeScript Errors:** ✅ Zero (full strict mode compliance)
+- **Security Vulnerabilities Fixed:** 1 (plaintext passwords → bcrypt hashing)
+
+### Benefits
+
+#### Security Benefits
+- ✅ **No plaintext passwords** - All passwords hashed with bcrypt (10 rounds)
+- ✅ **Brute-force resistant** - 2^10 = 1,024 iterations per hash (~100ms)
+- ✅ **Industry standard** - Bcrypt is battle-tested and recommended by OWASP
+
+#### Data Integrity Benefits
+- ✅ **Early validation** - Malformed data rejected before database queries
+- ✅ **Type safety** - Zod infers TypeScript types from schemas
+- ✅ **Consistent errors** - All validation errors follow same format
+- ✅ **CUID validation** - Strict format checking prevents database errors
+
+#### Offline Sync Benefits
+- ✅ **No 409 errors** - Upsert patterns handle duplicate records gracefully
+- ✅ **Data preservation** - Existing progress not overwritten on re-sync
+- ✅ **Transaction safety** - Atomic upserts in enrollment transaction
+- ✅ **Idempotent API** - Safe to retry requests without side effects
+
+### Why This Matters for Rural Education
+
+In low-connectivity environments:
+- **Password security** protects student accounts even if database is compromised
+- **Upsert patterns** prevent data loss when students sync after being offline
+- **Grouped validation errors** reduce API calls (important for slow connections)
+- **Type-safe schemas** prevent runtime errors in production environments
+
+---

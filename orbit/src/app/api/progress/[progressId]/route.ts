@@ -1,5 +1,14 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiSuccess,
+  apiNotFound,
+  apiValidationError,
+  apiNoContent,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
+import { updateProgressSchema } from "@/lib/schemas";
 
 /**
  * GET /api/progress/:progressId
@@ -13,9 +22,11 @@ import { NextResponse } from "next/server";
  * Error: 404 Not Found if progress doesn't exist
  */
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ progressId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { progressId } = await params;
 
@@ -41,25 +52,13 @@ export async function GET(
     });
 
     if (!progress) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: `Progress record with id ${progressId} not found`,
-        },
-        { status: 404 }
-      );
+      return apiNotFound("Progress record", progressId, requestId);
     }
 
-    return NextResponse.json({ data: progress });
+    return apiSuccess(progress, requestId);
   } catch (error) {
     console.error("[API] GET /api/progress/:progressId failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch progress record",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -71,14 +70,14 @@ export async function GET(
  * Path Parameters:
  * - progressId: Progress record ID (CUID)
  *
- * Request Body (all fields optional):
+ * Request Body (at least one field required):
  * {
  *   completed?: boolean,
- *   score?: number | null
+ *   score?: number | null (0-100 or null)
  * }
  *
  * Response: 200 OK with updated progress data
- * Error: 400 Bad Request, 404 Not Found, 500 Internal Error
+ * Error: 400 Bad Request (validation), 404 Not Found, 500 Internal Error
  *
  * Note: Uses PATCH (not PUT) for partial updates following REST conventions.
  */
@@ -86,34 +85,19 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ progressId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { progressId } = await params;
     const body = await request.json();
 
-    // Extract only allowed fields for update
-    const { completed, score } = body;
-
-    // Validate at least one field is provided
-    if (completed === undefined && score === undefined) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "At least one field (completed, score) must be provided",
-        },
-        { status: 400 }
-      );
+    // Validate request body with Zod schema
+    const validationResult = updateProgressSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate score range if provided
-    if (score !== undefined && score !== null && (score < 0 || score > 100)) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Score must be between 0 and 100",
-        },
-        { status: 400 }
-      );
-    }
+    const { completed, score } = validationResult.data;
 
     // Build update data object
     const updateData: { completed?: boolean; score?: number | null } = {};
@@ -143,36 +127,15 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({
-      message: "Progress record updated successfully",
-      data: progress,
-    });
+    return apiSuccess(progress, requestId);
   } catch (error) {
     console.error("[API] PATCH /api/progress/:progressId failed:", error);
 
-    // Handle record not found
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: "Progress record not found",
-        },
-        { status: 404 }
-      );
-    }
+    // Try Prisma error handler first
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    return NextResponse.json(
-      {
-        error: "Failed to update progress record",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -188,9 +151,11 @@ export async function PATCH(
  * Error: 404 Not Found, 500 Internal Error
  */
 export async function DELETE(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ progressId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { progressId } = await params;
 
@@ -199,32 +164,14 @@ export async function DELETE(
     });
 
     // 204 No Content - successful deletion
-    return new NextResponse(null, { status: 204 });
+    return apiNoContent(requestId);
   } catch (error) {
     console.error("[API] DELETE /api/progress/:progressId failed:", error);
 
-    // Handle record not found
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: "Progress record not found",
-        },
-        { status: 404 }
-      );
-    }
+    // Try Prisma error handler first
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    return NextResponse.json(
-      {
-        error: "Failed to delete progress record",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

@@ -1,47 +1,73 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiCreated,
+  apiValidationError,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
+import { createUserSchema } from "@/lib/schemas";
+import { hashPassword } from "@/lib/auth/password";
 
 /**
  * POST /api/users/enroll
  *
- * Enrolls a new student using an atomic transaction.
+ * Enrolls a student using an atomic transaction with UPSERT support.
+ *
+ * Request Body:
+ * {
+ *   name: string (1-100 chars),
+ *   email: string (valid email),
+ *   password: string (min 8 chars)
+ * }
  *
  * Transaction ensures:
- * 1. User is created
+ * 1. User is created or updated (UPSERT on email)
  * 2. All existing lessons are fetched
- * 3. Progress records are initialized for ALL lessons
+ * 3. Progress records are initialized for ALL lessons (UPSERT on userId+lessonId)
+ *
+ * UPSERT Behavior (Offline Sync Support):
+ * - User: If email exists, updates name and password
+ * - Progress: If userId+lessonId exists, updates the record
+ * - This prevents 409 Conflict errors when re-enrolling or syncing
  *
  * If any step fails, the entire transaction is rolled back.
+ *
+ * Response: 201 Created with user data and progress count
+ * Error: 400 Bad Request (validation), 500 Internal Error
+ *
+ * Security: Password is hashed with bcrypt before storage.
  */
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+
   try {
-    const { name, email, password } = await request.json();
+    const body = await request.json();
 
-    // Input validation
-    if (!name || !email || !password) {
-      return NextResponse.json(
-        { error: "Missing required fields: name, email, password" },
-        { status: 400 }
-      );
+    // Validate request body with Zod schema
+    const validationResult = createUserSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: "Invalid email format" },
-        { status: 400 }
-      );
-    }
+    const { name, email, password } = validationResult.data;
 
-    // Transaction: Create user + initialize all progress records atomically
+    // Hash password before storage
+    const hashedPassword = await hashPassword(password);
+
+    // Transaction: Upsert user + upsert all progress records atomically
     const result = await prisma.$transaction(async (tx) => {
-      // Step 1: Create the user
-      const newUser = await tx.user.create({
-        data: {
+      // Step 1: Upsert the user (create or update on email)
+      const newUser = await tx.user.upsert({
+        where: { email },
+        update: {
+          name,
+          password: hashedPassword,
+        },
+        create: {
           name,
           email,
-          password, // Note: In Auth module, password will be hashed with bcrypt
+          password: hashedPassword,
         },
       });
 
@@ -50,18 +76,33 @@ export async function POST(request: Request) {
         select: { id: true },
       });
 
-      // Step 3: Create progress records for all lessons
+      // Step 3: Upsert progress records for all lessons
+      let progressCount = 0;
       if (allLessons.length > 0) {
-        const progressRecords = allLessons.map((lesson) => ({
-          userId: newUser.id,
-          lessonId: lesson.id,
-          completed: false,
-          score: null,
-        }));
-
-        await tx.progress.createMany({
-          data: progressRecords,
-        });
+        // Use Promise.all to upsert all progress records in parallel
+        await Promise.all(
+          allLessons.map((lesson) =>
+            tx.progress.upsert({
+              where: {
+                userId_lessonId: {
+                  userId: newUser.id,
+                  lessonId: lesson.id,
+                },
+              },
+              update: {
+                // Don't overwrite existing progress data
+                // Keep completed and score as they are
+              },
+              create: {
+                userId: newUser.id,
+                lessonId: lesson.id,
+                completed: false,
+                score: null,
+              },
+            })
+          )
+        );
+        progressCount = allLessons.length;
       }
 
       return {
@@ -71,41 +112,20 @@ export async function POST(request: Request) {
           email: newUser.email,
           createdAt: newUser.createdAt,
         },
-        progressInitialized: allLessons.length,
+        progressInitialized: progressCount,
       };
     });
 
-    return NextResponse.json(
-      {
-        message: "Student enrolled successfully",
-        data: result,
-      },
-      { status: 201 }
-    );
+    return apiCreated(result, "Student enrolled successfully", requestId);
   } catch (error) {
     // Transaction will automatically rollback on error
     console.error("Enrollment transaction failed:", error);
 
-    // Handle Prisma unique constraint violation (duplicate email)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        { error: "Email already exists" },
-        { status: 409 }
-      );
-    }
+    // Try Prisma error handler first
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
     // Handle other errors
-    return NextResponse.json(
-      {
-        error: "Failed to enroll student",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

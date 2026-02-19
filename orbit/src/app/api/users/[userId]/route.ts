@@ -1,5 +1,15 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiSuccess,
+  apiNotFound,
+  apiValidationError,
+  apiNoContent,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
+import { updateUserSchema } from "@/lib/schemas";
+import { hashPassword } from "@/lib/auth/password";
 
 /**
  * GET /api/users/:userId
@@ -21,6 +31,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { userId } = await params;
     const { searchParams } = new URL(request.url);
@@ -65,25 +77,13 @@ export async function GET(
     });
 
     if (!user) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: `User with id ${userId} not found`,
-        },
-        { status: 404 }
-      );
+      return apiNotFound("User", userId, requestId);
     }
 
-    return NextResponse.json({ data: user });
+    return apiSuccess(user, requestId);
   } catch (error) {
     console.error("[API] GET /api/users/:userId failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch user",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -95,58 +95,45 @@ export async function GET(
  * Path Parameters:
  * - userId: User ID (CUID)
  *
- * Request Body (all fields optional):
+ * Request Body (at least one field required):
  * {
- *   name?: string,
- *   email?: string
+ *   name?: string (1-100 chars),
+ *   email?: string (valid email),
+ *   password?: string (min 8 chars, will be hashed)
  * }
  *
  * Response: 200 OK with updated user data
- * Error: 400 Bad Request, 404 Not Found, 409 Conflict, 500 Internal Error
+ * Error: 400 Bad Request (validation), 404 Not Found, 409 Conflict, 500 Internal Error
  *
- * Note: Password updates should be handled through a dedicated
- * password change endpoint with proper authentication.
+ * Note: Password updates are allowed but should ideally be handled through
+ * a dedicated password change endpoint with proper authentication in production.
  */
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { userId } = await params;
     const body = await request.json();
 
-    // Extract only allowed fields for update
-    const { name, email } = body;
-
-    // Validate at least one field is provided
-    if (!name && !email) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "At least one field (name, email) must be provided",
-        },
-        { status: 400 }
-      );
+    // Validate request body with Zod schema
+    const validationResult = updateUserSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate email format if provided
-    if (email) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return NextResponse.json(
-          {
-            error: "Bad Request",
-            message: "Invalid email format",
-          },
-          { status: 400 }
-        );
-      }
-    }
+    const { name, email, password } = validationResult.data;
 
     // Build update data object
-    const updateData: { name?: string; email?: string } = {};
+    const updateData: { name?: string; email?: string; password?: string } = {};
     if (name) updateData.name = name;
     if (email) updateData.email = email;
+    if (password) {
+      // Hash password if provided
+      updateData.password = await hashPassword(password);
+    }
 
     // Update user
     const user = await prisma.user.update({
@@ -160,52 +147,15 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({
-      message: "User updated successfully",
-      data: user,
-    });
+    return apiSuccess(user, requestId);
   } catch (error) {
     console.error("[API] PATCH /api/users/:userId failed:", error);
 
-    // Handle record not found
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: "User not found",
-        },
-        { status: 404 }
-      );
-    }
+    // Try Prisma error handler first (handles P2025 and P2002)
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    // Handle unique constraint violation (duplicate email)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Conflict",
-          message: "Email already exists",
-        },
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: "Failed to update user",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -224,9 +174,11 @@ export async function PATCH(
  * all related progress records will be automatically deleted.
  */
 export async function DELETE(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { userId } = await params;
 
@@ -235,32 +187,14 @@ export async function DELETE(
     });
 
     // 204 No Content - successful deletion
-    return new NextResponse(null, { status: 204 });
+    return apiNoContent(requestId);
   } catch (error) {
     console.error("[API] DELETE /api/users/:userId failed:", error);
 
-    // Handle record not found
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2025"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Not Found",
-          message: "User not found",
-        },
-        { status: 404 }
-      );
-    }
+    // Try Prisma error handler first
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    return NextResponse.json(
-      {
-        error: "Failed to delete user",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
