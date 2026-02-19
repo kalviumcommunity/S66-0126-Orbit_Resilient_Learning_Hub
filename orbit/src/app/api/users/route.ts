@@ -1,5 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiPaginated,
+  apiCreated,
+  apiBadRequest,
+  apiInvalidFormat,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
 
 /**
  * GET /api/users
@@ -20,6 +28,8 @@ import { NextResponse } from "next/server";
  * Note: Password field is excluded for security.
  */
 export async function GET(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -60,25 +70,20 @@ export async function GET(request: Request) {
       take: limit,
     });
 
-    return NextResponse.json({
-      data: users,
-      pagination: {
+    return apiPaginated(
+      users,
+      {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
         hasMore: skip + users.length < total,
       },
-    });
+      requestId
+    );
   } catch (error) {
     console.error("[API] GET /api/users failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch users",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -102,30 +107,28 @@ export async function GET(request: Request) {
  * automatic progress initialization for all lessons.
  */
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const body = await request.json();
     const { name, email, password } = body;
 
     // Validate required fields
     if (!name || !email || !password) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "name, email, and password are required",
-        },
-        { status: 400 }
+      return apiBadRequest(
+        "name, email, and password are required",
+        undefined,
+        requestId
       );
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Invalid email format",
-        },
-        { status: 400 }
+      return apiInvalidFormat(
+        "email",
+        "valid email address (e.g., user@example.com)",
+        requestId
       );
     }
 
@@ -144,38 +147,14 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(
-      {
-        message: "User created successfully",
-        data: user,
-      },
-      { status: 201 }
-    );
+    return apiCreated(user, "User created successfully", requestId);
   } catch (error) {
     console.error("[API] POST /api/users failed:", error);
 
-    // Handle unique constraint violation (duplicate email)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Conflict",
-          message: "Email already exists",
-        },
-        { status: 409 }
-      );
-    }
+    // Try Prisma error handler first (handles P2002 duplicate email)
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    return NextResponse.json(
-      {
-        error: "Failed to create user",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

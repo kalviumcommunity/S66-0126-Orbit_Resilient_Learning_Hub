@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiCreated,
+  apiBadRequest,
+  apiInvalidFormat,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
 
 /**
  * POST /api/users/enroll
@@ -14,23 +21,27 @@ import { NextResponse } from "next/server";
  * If any step fails, the entire transaction is rolled back.
  */
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const { name, email, password } = await request.json();
 
     // Input validation
     if (!name || !email || !password) {
-      return NextResponse.json(
-        { error: "Missing required fields: name, email, password" },
-        { status: 400 }
+      return apiBadRequest(
+        "Missing required fields: name, email, password",
+        undefined,
+        requestId
       );
     }
 
     // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: "Invalid email format" },
-        { status: 400 }
+      return apiInvalidFormat(
+        "email",
+        "valid email address (e.g., user@example.com)",
+        requestId
       );
     }
 
@@ -75,37 +86,16 @@ export async function POST(request: Request) {
       };
     });
 
-    return NextResponse.json(
-      {
-        message: "Student enrolled successfully",
-        data: result,
-      },
-      { status: 201 }
-    );
+    return apiCreated(result, "Student enrolled successfully", requestId);
   } catch (error) {
     // Transaction will automatically rollback on error
     console.error("Enrollment transaction failed:", error);
 
-    // Handle Prisma unique constraint violation (duplicate email)
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        { error: "Email already exists" },
-        { status: 409 }
-      );
-    }
+    // Try Prisma error handler first (handles P2002 duplicate email)
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
     // Handle other errors
-    return NextResponse.json(
-      {
-        error: "Failed to enroll student",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

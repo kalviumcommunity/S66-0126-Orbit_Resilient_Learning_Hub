@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiSuccess,
+  apiNotFound,
+  apiServerError,
+} from "@/lib/api-response";
 
 /**
  * GET /api/lessons/:identifier
@@ -25,6 +30,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ identifier: string }> }
 ) {
+  const requestId = generateRequestId();
+
   try {
     const { identifier } = await params;
     const { searchParams } = new URL(request.url);
@@ -61,13 +68,7 @@ export async function GET(
     });
 
     if (!lesson) {
-      return NextResponse.json(
-        {
-          error: "Lesson not found",
-          message: `No lesson found with ${isCuid ? "id" : "slug"}: ${identifier}`,
-        },
-        { status: 404 }
-      );
+      return apiNotFound("Lesson", identifier, requestId);
     }
 
     // Format response
@@ -79,15 +80,9 @@ export async function GET(
       }),
     };
 
-    return NextResponse.json({ data: response });
+    return apiSuccess(response, requestId);
   } catch (error) {
     console.error("[API] GET /api/lessons/:identifier failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch lesson",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }

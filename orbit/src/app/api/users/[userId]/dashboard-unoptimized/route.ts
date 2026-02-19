@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
  * ⚠️ DO NOT USE IN PRODUCTION - For benchmarking only!
  */
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ userId: string }> }
 ) {
   try {

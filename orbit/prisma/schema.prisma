@@ -10,38 +10,38 @@ model User {
   id        String     @id @default(cuid())
   name      String?
   email     String     @unique
-  password  String     // To be hashed later in Auth module
-  progress  Progress[]
+  password  String
   createdAt DateTime   @default(now())
+  progress  Progress[]
 
-  @@index([email]) // Optimize login/lookup queries
+  @@index([email])
 }
 
 model Lesson {
-  id          String     @id @default(cuid())
-  title       String
-  slug        String     @unique
-  content     String     @db.Text // Store markdown for offline rendering
-  order       Int        @default(0) // To order lessons correctly
-  progress    Progress[]
-  updatedAt   DateTime   @updatedAt
+  id        String     @id @default(cuid())
+  title     String
+  slug      String     @unique
+  content   String
+  order     Int        @default(0)
+  updatedAt DateTime   @updatedAt
+  progress  Progress[]
 
-  @@index([slug])  // Optimize lesson lookup by slug
-  @@index([order]) // Optimize ordered lesson queries
+  @@index([slug])
+  @@index([order])
 }
 
 model Progress {
-  id         String   @id @default(cuid())
-  userId     String
-  lessonId   String
-  completed  Boolean  @default(false)
-  score      Int?     // For quiz results
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lesson     Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  userId    String
+  lessonId  String
+  completed Boolean  @default(false)
+  score     Int?
+  updatedAt DateTime @updatedAt
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, lessonId]) // One student can have only one progress entry per lesson
-  @@index([userId])            // Optimize user progress queries
-  @@index([completed])         // Optimize completion status queries
-  @@index([userId, completed]) // Composite index for dashboard queries
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@index([completed])
+  @@index([userId, completed])
 }

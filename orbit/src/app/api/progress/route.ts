@@ -1,5 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import {
+  generateRequestId,
+  apiPaginated,
+  apiBadRequest,
+  apiOutOfRange,
+  apiCreated,
+  apiServerError,
+  handlePrismaError,
+} from "@/lib/api-response";
 
 /**
  * GET /api/progress
@@ -25,6 +33,8 @@ import { NextResponse } from "next/server";
  * - 500: Internal Server Error
  */
 export async function GET(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -34,12 +44,10 @@ export async function GET(request: Request) {
 
     // At least one filter is required for performance reasons
     if (!userId && !lessonId) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Either userId or lessonId parameter is required",
-        },
-        { status: 400 }
+      return apiBadRequest(
+        "Either userId or lessonId parameter is required",
+        undefined,
+        requestId
       );
     }
 
@@ -90,25 +98,20 @@ export async function GET(request: Request) {
       take: limit,
     });
 
-    return NextResponse.json({
-      data: progressRecords,
-      pagination: {
+    return apiPaginated(
+      progressRecords,
+      {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
         hasMore: skip + progressRecords.length < total,
       },
-    });
+      requestId
+    );
   } catch (error) {
     console.error("[API] GET /api/progress failed:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to fetch progress records",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiServerError(error, requestId);
   }
 }
 
@@ -132,30 +135,24 @@ export async function GET(request: Request) {
  * to prevent duplicate progress records.
  */
 export async function POST(request: Request) {
+  const requestId = generateRequestId();
+
   try {
     const body = await request.json();
     const { userId, lessonId, completed = false, score = null } = body;
 
     // Validate required fields
     if (!userId || !lessonId) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "userId and lessonId are required",
-        },
-        { status: 400 }
+      return apiBadRequest(
+        "userId and lessonId are required",
+        undefined,
+        requestId
       );
     }
 
     // Validate score range if provided
     if (score !== null && (score < 0 || score > 100)) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Score must be between 0 and 100",
-        },
-        { status: 400 }
-      );
+      return apiOutOfRange("score", 0, 100, requestId);
     }
 
     // Create progress record
@@ -185,54 +182,19 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(
-      {
-        message: "Progress record created successfully",
-        data: progress,
-      },
-      { status: 201 }
+    return apiCreated(
+      progress,
+      "Progress record created successfully",
+      requestId
     );
   } catch (error) {
     console.error("[API] POST /api/progress failed:", error);
 
-    // Handle Prisma unique constraint violation
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Conflict",
-          message: "Progress record already exists for this user-lesson pair",
-        },
-        { status: 409 }
-      );
-    }
+    // Try Prisma error handler first
+    const prismaResponse = handlePrismaError(error, requestId);
+    if (prismaResponse) return prismaResponse;
 
-    // Handle foreign key constraint violation
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2003"
-    ) {
-      return NextResponse.json(
-        {
-          error: "Bad Request",
-          message: "Invalid userId or lessonId",
-        },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: "Failed to create progress record",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    // Fallback to server error
+    return apiServerError(error, requestId);
   }
 }

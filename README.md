@@ -637,3 +637,216 @@ We tested all 17 endpoints and captured 21 response files:
 5. **Maintainability** - 1:1 mapping with Prisma models reduces cognitive load
 
 ---
+
+## 📦 Global API Response Utility
+
+### Overview
+
+To improve **production observability** and **frontend predictability**, we implemented a centralized API response utility that enforces a consistent "envelope" structure across all 15 API endpoints. This standardization ensures every response includes traceability metadata and follows a uniform format.
+
+### Problem Solved
+
+**Before:**
+- Inconsistent response formats across endpoints
+- No request tracing (debugging production issues was difficult)
+- Manual error handling with inconsistent error codes
+- Different patterns for pagination, errors, and success responses
+
+**After:**
+- ✅ **100% consistent** response envelope across all endpoints
+- ✅ **Full traceability** with unique request IDs in every response
+- ✅ **Standardized error codes** in UPPER_SNAKE_CASE format
+- ✅ **Type-safe** helpers with full TypeScript support
+- ✅ **Production ready** with timestamps in ISO 8601 format
+
+### Response Envelope Structure
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T07:31:23.498Z",
+  "requestId": "8c36f47a-cea7-4de6-a92a-4bebf19c1d01",
+  "data": {
+    "id": "cmlrtkpu400016zsbfm1c2vy1",
+    "title": "Introduction to Offline Web Apps",
+    "slug": "intro-to-offline-apps",
+    "order": 1
+  }
+}
+```
+
+#### Error Response (400/404/409/500)
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T07:32:02.629Z",
+  "requestId": "f6d8f696-004e-40e9-acae-1378edf1f75c",
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Either userId or lessonId parameter is required"
+  }
+}
+```
+
+#### Paginated Response (200 OK)
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T07:31:23.498Z",
+  "requestId": "8c36f47a-cea7-4de6-a92a-4bebf19c1d01",
+  "data": [ /* array of items */ ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 42,
+    "totalPages": 5,
+    "hasMore": true
+  }
+}
+```
+
+#### Delete Response (204 No Content)
+```
+HTTP/1.1 204 No Content
+X-Request-Id: 78972255-6503-4aaf-a1d8-d8e924796118
+X-Success: true
+X-Timestamp: 2026-02-19T07:33:30.503Z
+```
+
+### Utility Functions
+
+The response utility (`src/lib/api-response.ts`) provides 14 helper functions:
+
+**Success Helpers:**
+- `apiSuccess<T>(data, requestId?)` - 200 OK with data
+- `apiCreated<T>(data, message?, requestId?)` - 201 Created
+- `apiNoContent(requestId?)` - 204 No Content with headers
+- `apiPaginated<T>(data[], pagination, requestId?)` - 200 OK with pagination
+
+**Error Helpers:**
+- `apiBadRequest(message, details?, requestId?)` - 400 Bad Request
+- `apiNotFound(resource, identifier?, requestId?)` - 404 Not Found
+- `apiConflict(message, details?, requestId?)` - 409 Conflict
+- `apiServerError(error, requestId?)` - 500 Internal Server Error
+
+**Validation Helpers:**
+- `apiMissingField(fieldName, requestId?)` - 400 for missing fields
+- `apiInvalidFormat(fieldName, expectedFormat, requestId?)` - 400 for format errors
+- `apiOutOfRange(fieldName, min, max, requestId?)` - 400 for range errors
+
+**Prisma Error Handler:**
+- `handlePrismaError(error, requestId?)` - Handles P2025, P2002, P2003 errors
+
+**Core Utility:**
+- `generateRequestId()` - Generates UUID v4 for request tracing
+
+### Standardized Error Codes
+
+All error codes use **UPPER_SNAKE_CASE** format:
+
+| Code | Status | Description |
+|------|--------|-------------|
+| `BAD_REQUEST` | 400 | Invalid request parameters |
+| `MISSING_REQUIRED_FIELD` | 400 | Required field missing |
+| `INVALID_FORMAT` | 400 | Field format incorrect |
+| `OUT_OF_RANGE` | 400 | Numeric value out of bounds |
+| `NOT_FOUND` | 404 | Resource doesn't exist |
+| `CONFLICT` | 409 | Duplicate entry/constraint violation |
+| `PRISMA_RECORD_NOT_FOUND` | 404 | Prisma P2025 error |
+| `PRISMA_UNIQUE_VIOLATION` | 409 | Prisma P2002 error |
+| `PRISMA_FOREIGN_KEY_VIOLATION` | 400 | Prisma P2003 error |
+| `INTERNAL_SERVER_ERROR` | 500 | Unexpected server error |
+
+### Implementation Statistics
+
+- **Endpoints Refactored:** 15 methods across 8 files
+- **Test Cases:** 20 comprehensive test scenarios
+- **Response Format:** 100% consistent across all endpoints
+- **Type Safety:** Full TypeScript strict mode compliance
+- **Build Status:** ✅ Zero TypeScript errors
+
+### Refactored Endpoints
+
+| Endpoint | Methods | Status |
+|----------|---------|--------|
+| `/api/lessons` | GET | ✅ Refactored |
+| `/api/lessons/[identifier]` | GET | ✅ Refactored |
+| `/api/progress` | GET, POST | ✅ Refactored |
+| `/api/progress/[progressId]` | GET, PATCH, DELETE | ✅ Refactored |
+| `/api/users` | GET, POST | ✅ Refactored |
+| `/api/users/[userId]` | GET, PATCH, DELETE | ✅ Refactored |
+| `/api/users/[userId]/dashboard` | GET | ✅ Refactored |
+| `/api/users/enroll` | POST | ✅ Refactored |
+
+### Example: Before and After
+
+**Before (Inconsistent):**
+```typescript
+// Endpoint 1
+return NextResponse.json({ data: user });
+
+// Endpoint 2
+return NextResponse.json({ user });
+
+// Endpoint 3
+return NextResponse.json({ result: lesson, message: "Success" });
+
+// Error handling - all different
+return NextResponse.json({ error: "Not found" }, { status: 404 });
+return NextResponse.json({ message: "User not found" }, { status: 404 });
+return NextResponse.json({ error: { message: "Not found" } }, { status: 404 });
+```
+
+**After (Consistent):**
+```typescript
+// Generate request ID once at the start
+const requestId = generateRequestId();
+
+// All success responses follow same pattern
+return apiSuccess(user, requestId);
+return apiSuccess(lesson, requestId);
+return apiCreated(newUser, "User created successfully", requestId);
+
+// All errors follow same pattern
+return apiNotFound("User", userId, requestId);
+return apiBadRequest("Invalid email format", undefined, requestId);
+return apiServerError(error, requestId);
+```
+
+### Testing & Evidence
+
+All 15 endpoints were tested with 20 test scenarios. Evidence captured:
+
+**Test Files:**
+- `orbit/api-evidence/responses-v2/test-all-endpoints.sh` - Automated test script
+- `orbit/api-evidence/responses-v2/*.json` - 20 actual response captures
+- `orbit/api-evidence/RESPONSE-UTILITY-GUIDE.md` - Complete developer guide (3,500+ words)
+
+**Test Coverage:**
+- ✅ Success responses (200, 201, 204)
+- ✅ Client errors (400, 404, 409)
+- ✅ Server errors (500)
+- ✅ Pagination responses
+- ✅ Validation error responses
+- ✅ Prisma error handling
+- ✅ Request ID tracing
+
+### Benefits for Production
+
+1. **Observability** - Every request is traceable via `requestId`
+2. **Debugging** - Logs can be filtered by request ID to track full request lifecycle
+3. **Frontend Predictability** - Clients always know response structure
+4. **Error Handling** - Consistent error codes enable centralized error handling
+5. **Type Safety** - TypeScript interfaces prevent response format drift
+6. **Maintainability** - Single source of truth for all response formats
+
+### Why This Matters for Rural Education
+
+In low-connectivity environments:
+- **Request tracing** helps debug sync issues when students come online
+- **Consistent errors** make offline error handling predictable
+- **Timestamps** help resolve data conflicts when multiple devices sync
+- **Type safety** prevents runtime errors in production (no internet = no remote debugging)
+
+---
