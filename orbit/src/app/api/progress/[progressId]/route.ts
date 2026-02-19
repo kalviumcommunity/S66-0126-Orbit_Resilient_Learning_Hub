@@ -3,12 +3,12 @@ import {
   generateRequestId,
   apiSuccess,
   apiNotFound,
-  apiBadRequest,
-  apiOutOfRange,
+  apiValidationError,
   apiNoContent,
   apiServerError,
   handlePrismaError,
 } from "@/lib/api-response";
+import { updateProgressSchema } from "@/lib/schemas";
 
 /**
  * GET /api/progress/:progressId
@@ -70,14 +70,14 @@ export async function GET(
  * Path Parameters:
  * - progressId: Progress record ID (CUID)
  *
- * Request Body (all fields optional):
+ * Request Body (at least one field required):
  * {
  *   completed?: boolean,
- *   score?: number | null
+ *   score?: number | null (0-100 or null)
  * }
  *
  * Response: 200 OK with updated progress data
- * Error: 400 Bad Request, 404 Not Found, 500 Internal Error
+ * Error: 400 Bad Request (validation), 404 Not Found, 500 Internal Error
  *
  * Note: Uses PATCH (not PUT) for partial updates following REST conventions.
  */
@@ -91,22 +91,13 @@ export async function PATCH(
     const { progressId } = await params;
     const body = await request.json();
 
-    // Extract only allowed fields for update
-    const { completed, score } = body;
-
-    // Validate at least one field is provided
-    if (completed === undefined && score === undefined) {
-      return apiBadRequest(
-        "At least one field (completed, score) must be provided",
-        undefined,
-        requestId
-      );
+    // Validate request body with Zod schema
+    const validationResult = updateProgressSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate score range if provided
-    if (score !== undefined && score !== null && (score < 0 || score > 100)) {
-      return apiOutOfRange("score", 0, 100, requestId);
-    }
+    const { completed, score } = validationResult.data;
 
     // Build update data object
     const updateData: { completed?: boolean; score?: number | null } = {};

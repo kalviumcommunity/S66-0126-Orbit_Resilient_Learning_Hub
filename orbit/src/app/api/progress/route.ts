@@ -3,11 +3,12 @@ import {
   generateRequestId,
   apiPaginated,
   apiBadRequest,
-  apiOutOfRange,
+  apiValidationError,
   apiCreated,
   apiServerError,
   handlePrismaError,
 } from "@/lib/api-response";
+import { createProgressSchema } from "@/lib/schemas";
 
 /**
  * GET /api/progress
@@ -118,46 +119,57 @@ export async function GET(request: Request) {
 /**
  * POST /api/progress
  *
- * Creates a new progress record for a user-lesson pair.
+ * Creates or updates a progress record for a user-lesson pair (UPSERT).
  *
  * Request Body:
  * {
- *   userId: string,
- *   lessonId: string,
- *   completed?: boolean (default: false),
- *   score?: number | null
+ *   userId: string (CUID format),
+ *   lessonId: string (CUID format),
+ *   completed: boolean,
+ *   score?: number | null (0-100 or null)
  * }
  *
  * Response: 201 Created with progress data
- * Error: 400 Bad Request, 409 Conflict (duplicate), 500 Internal Error
+ * Error: 400 Bad Request (validation), 500 Internal Error
  *
- * Note: Uses Prisma's unique constraint (userId + lessonId)
- * to prevent duplicate progress records.
+ * UPSERT Behavior (Offline Sync Support):
+ * - If progress record exists (userId + lessonId), it will be UPDATED
+ * - If progress record doesn't exist, it will be CREATED
+ * - This prevents 409 Conflict errors when syncing offline data
+ * - Critical for rural students who may sync the same progress multiple times
+ *
+ * Note: Uses Prisma's composite unique constraint (userId_lessonId)
+ * defined in the schema: @@unique([userId, lessonId])
  */
 export async function POST(request: Request) {
   const requestId = generateRequestId();
 
   try {
     const body = await request.json();
-    const { userId, lessonId, completed = false, score = null } = body;
 
-    // Validate required fields
-    if (!userId || !lessonId) {
-      return apiBadRequest(
-        "userId and lessonId are required",
-        undefined,
-        requestId
-      );
+    // Validate request body with Zod schema
+    const validationResult = createProgressSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate score range if provided
-    if (score !== null && (score < 0 || score > 100)) {
-      return apiOutOfRange("score", 0, 100, requestId);
-    }
+    const { userId, lessonId, completed, score = null } = validationResult.data;
 
-    // Create progress record
-    const progress = await prisma.progress.create({
-      data: {
+    // UPSERT progress record (create or update)
+    // This is critical for offline sync - prevents 409 conflicts
+    const progress = await prisma.progress.upsert({
+      where: {
+        userId_lessonId: {
+          userId,
+          lessonId,
+        },
+      },
+      update: {
+        completed,
+        score,
+        updatedAt: new Date(),
+      },
+      create: {
         userId,
         lessonId,
         completed,
@@ -182,15 +194,11 @@ export async function POST(request: Request) {
       },
     });
 
-    return apiCreated(
-      progress,
-      "Progress record created successfully",
-      requestId
-    );
+    return apiCreated(progress, "Progress synced successfully", requestId);
   } catch (error) {
     console.error("[API] POST /api/progress failed:", error);
 
-    // Try Prisma error handler first
+    // Try Prisma error handler first (handles foreign key violations)
     const prismaResponse = handlePrismaError(error, requestId);
     if (prismaResponse) return prismaResponse;
 

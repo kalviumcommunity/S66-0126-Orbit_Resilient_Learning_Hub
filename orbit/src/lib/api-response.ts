@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 
 /**
  * Global API Response Utility
@@ -552,6 +553,67 @@ export function apiOutOfRange(
       error: {
         code: ErrorCodes.OUT_OF_RANGE,
         message: `Field '${fieldName}' must be between ${min} and ${max}`,
+      },
+    },
+    { status: 400 }
+  );
+}
+
+/**
+ * Returns 400 Bad Request for Zod validation errors
+ *
+ * Groups all validation errors into a single response with field-level details.
+ * This provides better UX than returning errors one-by-one.
+ *
+ * @param zodError - ZodError object from safeParse()
+ * @param requestId - Optional request ID
+ * @returns NextResponse with 400 status
+ *
+ * @example
+ * ```typescript
+ * const result = createUserSchema.safeParse(body);
+ * if (!result.success) {
+ *   return apiValidationError(result.error, requestId);
+ * }
+ * // Returns:
+ * // {
+ * //   "success": false,
+ * //   "error": {
+ * //     "code": "VALIDATION_ERROR",
+ * //     "message": "Request validation failed",
+ * //     "details": {
+ * //       "fields": {
+ * //         "email": "Invalid email format",
+ * //         "score": "Number must be between 0 and 100"
+ * //       }
+ * //     }
+ * //   }
+ * // }
+ * ```
+ */
+export function apiValidationError(
+  zodError: ZodError<unknown>,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  // Parse Zod errors into field-level map
+  const fields: Record<string, string> = {};
+
+  zodError.issues.forEach((issue) => {
+    const fieldPath = issue.path.join(".");
+    fields[fieldPath] = issue.message;
+  });
+
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: ErrorCodes.VALIDATION_ERROR,
+        message: "Request validation failed",
+        details: {
+          fields,
+        },
       },
     },
     { status: 400 }

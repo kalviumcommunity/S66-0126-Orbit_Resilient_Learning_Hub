@@ -850,3 +850,424 @@ In low-connectivity environments:
 - **Type safety** prevents runtime errors in production (no internet = no remote debugging)
 
 ---
+
+## 🛡️ Input Validation & Data Sanitization
+
+### Overview
+
+To ensure **data integrity** and **security** in offline-first environments, we implemented comprehensive input validation using **Zod** schemas and **bcrypt** password hashing. This module addresses the critical security vulnerability of plaintext password storage and adds robust validation to prevent malformed data from reaching the database.
+
+### Problem Solved
+
+**Before:**
+- ❌ Passwords stored in plaintext (critical security vulnerability)
+- ❌ Manual validation with inconsistent error messages
+- ❌ 409 Conflict errors on duplicate progress records during offline sync
+- ❌ No CUID format validation (malformed IDs reached database)
+- ❌ Validation errors returned one-by-one (poor UX)
+
+**After:**
+- ✅ **Passwords hashed with bcrypt** (10 rounds, ~100ms per hash)
+- ✅ **Zod schema validation** for all POST/PATCH endpoints
+- ✅ **UPSERT patterns** for offline sync (no more 409 errors!)
+- ✅ **Strict CUID validation** with regex (`^c[a-z0-9]{24}$`)
+- ✅ **Grouped validation errors** (all errors in single response)
+
+### Security Enhancement: Password Hashing
+
+We implemented bcrypt password hashing to fix the critical plaintext password vulnerability.
+
+**Implementation** (`src/lib/auth/password.ts`):
+```typescript
+import bcrypt from "bcrypt";
+
+const SALT_ROUNDS = 10; // 2^10 = 1,024 iterations
+
+export async function hashPassword(plainPassword: string): Promise<string> {
+  return bcrypt.hash(plainPassword, SALT_ROUNDS);
+}
+
+export async function verifyPassword(
+  plainPassword: string,
+  hashedPassword: string
+): Promise<boolean> {
+  return bcrypt.compare(plainPassword, hashedPassword);
+}
+```
+
+**Usage in Endpoints:**
+```typescript
+// POST /api/users
+const { name, email, password } = validatedData;
+const hashedPassword = await hashPassword(password); // Hash before storage
+
+const user = await prisma.user.create({
+  data: { name, email, password: hashedPassword }
+});
+```
+
+**Bcrypt Hash Format:**
+```
+$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+│  │  │  └─────────────── Hash (31 chars)
+│  │  └─────────────────── Salt (22 chars)
+│  └────────────────────── Cost factor (10)
+└───────────────────────── Algorithm identifier ($2b = bcrypt)
+```
+
+### Validation Architecture
+
+We created centralized Zod schemas in `src/lib/schemas/`:
+
+**Directory Structure:**
+```
+src/lib/schemas/
+├── index.ts           # Centralized exports
+├── user.schema.ts     # User validation
+├── progress.schema.ts # Progress validation (with CUID regex)
+├── lesson.schema.ts   # Lesson validation (future use)
+└── README.md          # Schema documentation
+```
+
+**Example Schema** (`user.schema.ts`):
+```typescript
+import { z } from "zod";
+
+export const createUserSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+  email: z.string().email().toLowerCase().trim(),
+  password: z.string().min(8),
+});
+
+export const updateUserSchema = z.object({
+  name: z.string().min(1).max(100).trim().optional(),
+  email: z.string().email().toLowerCase().trim().optional(),
+  password: z.string().min(8).optional(),
+}).refine((data) => data.name || data.email || data.password, {
+  message: "At least one field must be provided",
+});
+
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+```
+
+### CUID Validation
+
+Progress schemas use strict CUID format validation to catch malformed IDs early:
+
+```typescript
+const cuidRegex = /^c[a-z0-9]{24}$/;
+
+export const createProgressSchema = z.object({
+  userId: z.string().regex(cuidRegex, "Invalid user ID format"),
+  lessonId: z.string().regex(cuidRegex, "Invalid lesson ID format"),
+  completed: z.boolean(),
+  score: z.number().int().min(0).max(100).nullable().optional(),
+});
+```
+
+**Valid CUID:** `c12345678901234567890123` (starts with 'c' + 24 alphanumeric chars)  
+**Invalid Examples:**
+- `invalid-id` - Wrong format
+- `12345678901234567890123` - Missing 'c' prefix
+- `c12345` - Too short
+
+### Upsert Patterns for Offline Sync
+
+**The Problem:** Rural students may be offline for days. When they come back online, their device attempts to sync the same progress record multiple times, resulting in 409 Conflict errors and data loss.
+
+**The Solution:** Use Prisma's `upsert()` operation to update existing records instead of failing.
+
+#### POST /api/progress (Upsert Implementation)
+
+**Before (caused 409 errors):**
+```typescript
+const progress = await prisma.progress.create({
+  data: { userId, lessonId, completed, score }
+});
+// Fails with 409 if record already exists!
+```
+
+**After (upsert):**
+```typescript
+const progress = await prisma.progress.upsert({
+  where: {
+    userId_lessonId: { userId, lessonId } // Composite unique key
+  },
+  update: {
+    completed,
+    score,
+    updatedAt: new Date()
+  },
+  create: {
+    userId,
+    lessonId,
+    completed,
+    score
+  }
+});
+// ✅ Creates if new, updates if exists!
+```
+
+#### POST /api/users/enroll (Transaction with Upsert)
+
+**Before (transaction failed on re-enrollment):**
+```typescript
+await prisma.$transaction(async (tx) => {
+  const user = await tx.user.create({ data: { name, email, password } });
+  // ❌ Fails if user already exists
+  
+  await tx.progress.createMany({ data: progressRecords });
+  // ❌ Fails if progress already exists
+});
+```
+
+**After (transaction with upsert):**
+```typescript
+await prisma.$transaction(async (tx) => {
+  // Upsert user (create or update on email)
+  const user = await tx.user.upsert({
+    where: { email },
+    update: { name, password: hashedPassword },
+    create: { name, email, password: hashedPassword }
+  });
+  
+  // Upsert progress for each lesson
+  await Promise.all(
+    allLessons.map((lesson) =>
+      tx.progress.upsert({
+        where: {
+          userId_lessonId: {
+            userId: user.id,
+            lessonId: lesson.id
+          }
+        },
+        update: {}, // Keep existing progress
+        create: { userId: user.id, lessonId: lesson.id, completed: false, score: null }
+      })
+    )
+  );
+});
+// ✅ Safe to call multiple times!
+```
+
+### Validation Error Responses
+
+Validation errors are grouped into a single response for better UX:
+
+**Example: Multiple validation errors**
+```bash
+curl -X POST "http://localhost:3000/api/users" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"not-an-email","password":"short"}'
+```
+
+**Response:**
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T09:14:49.902Z",
+  "requestId": "8fa53d7a-3e0f-421c-a0cf-69aacd057f14",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": {
+      "fields": {
+        "name": "Invalid input: expected string, received undefined",
+        "email": "Invalid email format",
+        "password": "Password must be at least 8 characters"
+      }
+    }
+  }
+}
+```
+
+### Validation Rules Summary
+
+#### User Validation
+| Field | Create | Update | Rules |
+|-------|--------|--------|-------|
+| `name` | Required | Optional | 1-100 chars, trimmed |
+| `email` | Required | Optional | Valid email, lowercase, trimmed |
+| `password` | Required | Optional | Min 8 chars, hashed with bcrypt |
+
+**Update Rule:** At least one field must be provided
+
+#### Progress Validation
+| Field | Create | Update | Rules |
+|-------|--------|--------|-------|
+| `userId` | Required | N/A | CUID format (`^c[a-z0-9]{24}$`) |
+| `lessonId` | Required | N/A | CUID format (`^c[a-z0-9]{24}$`) |
+| `completed` | Required | Optional | Boolean |
+| `score` | Optional | Optional | Integer 0-100 or null |
+
+**Update Rule:** At least one field must be provided
+
+### Refactored Endpoints
+
+We added validation and password hashing to 5 endpoints (10 HTTP methods):
+
+| Endpoint | Method | Changes |
+|----------|--------|---------|
+| `/api/users` | POST | ✅ Zod validation + bcrypt hashing + keep 409 |
+| `/api/users/:userId` | PATCH | ✅ Zod validation + bcrypt hashing |
+| `/api/progress` | POST | ✅ Zod validation + **UPSERT** |
+| `/api/progress/:progressId` | PATCH | ✅ Zod validation |
+| `/api/users/enroll` | POST | ✅ Zod validation + bcrypt + **UPSERT** |
+
+**Key Change:** POST /api/progress and POST /api/users/enroll now use **upsert** to prevent 409 Conflict errors during offline sync.
+
+### Test Results
+
+We created a comprehensive test suite (`orbit/test-module-2.19.sh`) with 13 test scenarios:
+
+```bash
+cd orbit && ./test-module-2.19.sh
+```
+
+**Test Coverage:**
+1. ✅ Create user with valid data (password hashed)
+2. ✅ Validation error: missing required field (name)
+3. ✅ Validation error: invalid email format
+4. ✅ Validation error: password too short
+5. ✅ Create progress with valid data
+6. ✅ **Upsert behavior: update same progress record (no 409!)**
+7. ✅ Validation error: invalid userId CUID format
+8. ✅ Validation error: score out of range (150)
+9. ✅ Update user with valid data
+10. ✅ Validation error: no fields provided in PATCH
+11. ✅ Enroll student with UPSERT (new user)
+12. ✅ **Re-enroll same user (UPSERT behavior test - no 409!)**
+13. ✅ Password is hashed in database (bcrypt format verified)
+
+**All tests passed successfully!**
+
+### Example Test Results
+
+**Test 5: Create progress with valid data**
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T09:14:50.304Z",
+  "requestId": "0be805fe-18f5-4f57-a969-784ce7edcc14",
+  "data": {
+    "id": "cmlt8w1mc00017msble3k16em",
+    "userId": "cmlt8w17n00007msbxb5md86a",
+    "lessonId": "cmlrtkpu400016zsbfm1c2vy1",
+    "completed": true,
+    "score": 95,
+    "updatedAt": "2026-02-19T09:14:50.287Z"
+  },
+  "message": "Progress synced successfully"
+}
+```
+
+**Test 6: Upsert behavior (update same progress record)**
+```json
+{
+  "success": true,
+  "timestamp": "2026-02-19T09:14:50.364Z",
+  "requestId": "9aaa6513-5e4d-4d73-bcbd-1961ba61b1b4",
+  "data": {
+    "id": "cmlt8w1mc00017msble3k16em",
+    "userId": "cmlt8w17n00007msbxb5md86a",
+    "lessonId": "cmlrtkpu400016zsbfm1c2vy1",
+    "completed": true,
+    "score": 100, // ✅ Updated from 95 to 100
+    "updatedAt": "2026-02-19T09:14:50.339Z"
+  },
+  "message": "Progress synced successfully"
+}
+```
+
+**Notice:** Same `id` and `userId_lessonId` pair, but score updated from 95 to 100. No 409 Conflict error!
+
+**Test 7: Invalid CUID format**
+```json
+{
+  "success": false,
+  "timestamp": "2026-02-19T09:14:50.422Z",
+  "requestId": "79c00c8c-f005-47fa-8c6d-135a36ce98c3",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": {
+      "fields": {
+        "userId": "Invalid user ID format. Must be a valid CUID (e.g., c12345678901234567890123)"
+      }
+    }
+  }
+}
+```
+
+### API Response Utility Integration
+
+We extended the `api-response.ts` utility with a new validation error handler:
+
+```typescript
+import { ZodError } from "zod";
+
+export function apiValidationError(
+  zodError: ZodError<unknown>,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  const fields: Record<string, string> = {};
+  
+  zodError.issues.forEach((issue) => {
+    const fieldPath = issue.path.join(".");
+    fields[fieldPath] = issue.message;
+  });
+
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: ErrorCodes.VALIDATION_ERROR,
+        message: "Request validation failed",
+        details: { fields }
+      }
+    },
+    { status: 400 }
+  );
+}
+```
+
+### Implementation Statistics
+
+- **Dependencies Added:** `zod@4.3.6`, `bcrypt@5.1.1`, `@types/bcrypt@5.0.2`
+- **Schema Files Created:** 4 files (`user`, `progress`, `lesson`, `index`)
+- **Endpoints Refactored:** 5 endpoints (10 HTTP methods)
+- **Test Scenarios:** 13 comprehensive tests
+- **TypeScript Errors:** ✅ Zero (full strict mode compliance)
+- **Security Vulnerabilities Fixed:** 1 (plaintext passwords → bcrypt hashing)
+
+### Benefits
+
+#### Security Benefits
+- ✅ **No plaintext passwords** - All passwords hashed with bcrypt (10 rounds)
+- ✅ **Brute-force resistant** - 2^10 = 1,024 iterations per hash (~100ms)
+- ✅ **Industry standard** - Bcrypt is battle-tested and recommended by OWASP
+
+#### Data Integrity Benefits
+- ✅ **Early validation** - Malformed data rejected before database queries
+- ✅ **Type safety** - Zod infers TypeScript types from schemas
+- ✅ **Consistent errors** - All validation errors follow same format
+- ✅ **CUID validation** - Strict format checking prevents database errors
+
+#### Offline Sync Benefits
+- ✅ **No 409 errors** - Upsert patterns handle duplicate records gracefully
+- ✅ **Data preservation** - Existing progress not overwritten on re-sync
+- ✅ **Transaction safety** - Atomic upserts in enrollment transaction
+- ✅ **Idempotent API** - Safe to retry requests without side effects
+
+### Why This Matters for Rural Education
+
+In low-connectivity environments:
+- **Password security** protects student accounts even if database is compromised
+- **Upsert patterns** prevent data loss when students sync after being offline
+- **Grouped validation errors** reduce API calls (important for slow connections)
+- **Type-safe schemas** prevent runtime errors in production environments
+
+---

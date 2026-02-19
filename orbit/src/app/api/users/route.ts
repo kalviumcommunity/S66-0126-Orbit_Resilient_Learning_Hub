@@ -3,11 +3,12 @@ import {
   generateRequestId,
   apiPaginated,
   apiCreated,
-  apiBadRequest,
-  apiInvalidFormat,
+  apiValidationError,
   apiServerError,
   handlePrismaError,
 } from "@/lib/api-response";
+import { createUserSchema } from "@/lib/schemas";
+import { hashPassword } from "@/lib/auth/password";
 
 /**
  * GET /api/users
@@ -94,13 +95,15 @@ export async function GET(request: Request) {
  *
  * Request Body:
  * {
- *   name: string,
- *   email: string (unique),
- *   password: string (will be hashed in Auth module)
+ *   name: string (1-100 chars),
+ *   email: string (valid email, unique),
+ *   password: string (min 8 chars)
  * }
  *
  * Response: 201 Created with user data
- * Error: 400 Bad Request, 409 Conflict (duplicate email), 500 Internal Error
+ * Error: 400 Bad Request (validation), 409 Conflict (duplicate email), 500 Internal Error
+ *
+ * Security: Passwords are hashed with bcrypt (10 rounds) before storage.
  *
  * Note: This is a basic user creation endpoint.
  * The enrollment endpoint (/api/users/enroll) includes
@@ -111,33 +114,24 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, email, password } = body;
 
-    // Validate required fields
-    if (!name || !email || !password) {
-      return apiBadRequest(
-        "name, email, and password are required",
-        undefined,
-        requestId
-      );
+    // Validate request body with Zod schema
+    const validationResult = createUserSchema.safeParse(body);
+    if (!validationResult.success) {
+      return apiValidationError(validationResult.error, requestId);
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return apiInvalidFormat(
-        "email",
-        "valid email address (e.g., user@example.com)",
-        requestId
-      );
-    }
+    const { name, email, password } = validationResult.data;
+
+    // Hash password before storage
+    const hashedPassword = await hashPassword(password);
 
     // Create user
     const user = await prisma.user.create({
       data: {
         name,
         email,
-        password, // Note: In Auth module, this will be hashed with bcrypt
+        password: hashedPassword,
       },
       select: {
         id: true,
