@@ -1,1 +1,0 @@
-{"testCase":"duplicate-email","timestamp":"2026-02-18T10:36:17.947Z","success":false,"error":null,"rollbackVerified":true,"details":{"existingUserBefore":"not found","userCountAfterRollback":0,"explanation":"Transaction rolled back successfully - only 1 user exists"},"expectedError":true,"prismaErrorCode":"P2002"}

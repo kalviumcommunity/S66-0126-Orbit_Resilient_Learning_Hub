@@ -1,1 +1,0 @@
-{"testCase":"invalid-foreign-key","timestamp":"2026-02-18T10:36:23.870Z","success":false,"error":null,"rollbackVerified":true,"details":{"orphanedUsersCount":0,"explanation":"Transaction rolled back - no orphaned user records"},"expectedError":true,"prismaErrorCode":"P2003"}

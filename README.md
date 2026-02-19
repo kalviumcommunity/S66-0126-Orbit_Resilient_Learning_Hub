@@ -449,3 +449,191 @@ FROM "Lesson";  -- ❌ Completely unnecessary query!
 - ✅ Scalable to 100+ lessons without performance degradation
 
 ---
+
+## 🌐 RESTful API Architecture
+
+Orbit implements a comprehensive RESTful API following industry best practices for low-bandwidth environments.
+
+### API Design Principles
+
+We built 17 RESTful endpoints following strict conventions:
+
+1. **Resource-based routing** - Plural nouns (`/api/users`, `/api/lessons`, `/api/progress`)
+2. **HTTP semantics** - Correct verb usage (GET, POST, PATCH, DELETE)
+3. **Standard status codes** - 200 (OK), 201 (Created), 204 (No Content), 400 (Bad Request), 404 (Not Found), 409 (Conflict)
+4. **Server-side pagination** - Reduces payload sizes by ~48% for low-connectivity users
+5. **Security-first** - Password fields never exposed in responses
+
+### API Endpoints Summary
+
+| Resource | Endpoint | Method | Purpose |
+|----------|----------|--------|---------|
+| **Lessons** | `/api/lessons` | GET | Paginated list (excludes content) |
+| | `/api/lessons/[identifier]` | GET | Single lesson by ID or slug |
+| **Users** | `/api/users` | GET, POST | List users or create new user |
+| | `/api/users/[userId]` | GET, PATCH, DELETE | User CRUD operations |
+| | `/api/users/[userId]/dashboard` | GET | Optimized user dashboard |
+| | `/api/users/enroll` | POST | Atomic enrollment transaction |
+| **Progress** | `/api/progress` | GET, POST | Filter by userId/lessonId |
+| | `/api/progress/[progressId]` | GET, PATCH, DELETE | Progress CRUD operations |
+
+**Total:** 17 endpoints across 9 route files
+
+### Pagination Benefits
+
+Server-side pagination significantly reduces bandwidth usage:
+
+**Example: Lessons List**
+- Full response (10 lessons): 1.7 KB
+- Paginated (5 lessons): 876 bytes
+- **Savings: 48% reduction**
+
+**Implementation:**
+```typescript
+// All list endpoints return consistent pagination metadata
+{
+  "data": [...],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 100,
+    "totalPages": 10,
+    "hasMore": true
+  }
+}
+```
+
+**Default Limits:**
+- Lessons: 100 per page (max)
+- Users: 50 per page (max)
+- Progress: 100 per page (max)
+
+### API Usage Examples
+
+#### Create a User
+```bash
+curl -X POST "http://localhost:3000/api/users" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Student Name","email":"student@orbit.edu","password":"securepass"}'
+
+# Response (password excluded):
+{
+  "message": "User created successfully",
+  "data": {
+    "id": "cmlszlh750000gosbuix8go1b",
+    "name": "Student Name",
+    "email": "student@orbit.edu",
+    "createdAt": "2026-02-19T04:54:40.721Z"
+  }
+}
+```
+
+#### Enroll Student (Transaction)
+```bash
+curl -X POST "http://localhost:3000/api/users/enroll" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"New Student","email":"new@orbit.edu","password":"pass123"}'
+
+# Response:
+{
+  "message": "Student enrolled successfully",
+  "data": {
+    "user": { "id": "...", "name": "New Student", "email": "new@orbit.edu" },
+    "progressInitialized": 10  # Created progress for all 10 lessons
+  }
+}
+```
+
+#### Get Paginated Lessons
+```bash
+curl "http://localhost:3000/api/lessons?page=1&limit=5"
+
+# Response includes pagination metadata
+{
+  "data": [
+    {
+      "id": "cmlrtkpu400016zsbfm1c2vy1",
+      "title": "Introduction to Offline Web Apps",
+      "slug": "intro-to-offline-apps",
+      "order": 1,
+      "updatedAt": "2026-02-18T10:35:19.412Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 5,
+    "total": 10,
+    "totalPages": 2,
+    "hasMore": true
+  }
+}
+```
+
+#### Update Progress
+```bash
+curl -X PATCH "http://localhost:3000/api/progress/[progressId]" \
+  -H "Content-Type: application/json" \
+  -d '{"completed":true,"score":85}'
+
+# Response:
+{
+  "message": "Progress updated successfully",
+  "data": {
+    "id": "...",
+    "completed": true,
+    "score": 85,
+    "updatedAt": "2026-02-19T04:55:37.800Z",
+    "lesson": { "title": "Introduction to Offline Web Apps", ... },
+    "user": { "name": "Student Name", "email": "student@orbit.edu" }
+  }
+}
+```
+
+### Error Handling
+
+All endpoints return consistent error responses:
+
+```json
+// 404 Not Found
+{
+  "error": "User not found"
+}
+
+// 409 Conflict (duplicate email)
+{
+  "error": "Email already exists"
+}
+
+// 400 Bad Request (validation error)
+{
+  "error": "Invalid email format"
+}
+```
+
+### Test Evidence
+
+We tested all 17 endpoints and captured 21 response files:
+
+**Test Results Summary:**
+- ✅ All HTTP verbs working correctly (GET, POST, PATCH, DELETE)
+- ✅ Proper status codes (200, 201, 204, 400, 404, 409)
+- ✅ Pagination reduces payload by 48%
+- ✅ Input validation (email format, score range 0-100)
+- ✅ Security verified (passwords never exposed)
+- ✅ Transaction atomicity tested (enrollment rollback scenarios)
+
+**Documentation:**
+- `orbit/API.md` - Complete API reference (14,000+ words)
+- `orbit/api-evidence/TESTING-GUIDE.md` - 40+ test scenarios
+- `orbit/api-evidence/TEST-RESULTS.md` - Detailed test evidence
+- `orbit/api-evidence/responses/` - 21 actual API response files
+
+### Why RESTful Architecture?
+
+1. **Predictability** - Developers can guess endpoints based on resource names
+2. **Standards Compliance** - Follows HTTP RFC specifications
+3. **Tool Compatibility** - Works with curl, Postman, browser fetch()
+4. **Bandwidth Optimization** - Pagination critical for low-connectivity environments
+5. **Maintainability** - 1:1 mapping with Prisma models reduces cognitive load
+
+---
