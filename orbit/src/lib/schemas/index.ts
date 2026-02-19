@@ -47,3 +47,11 @@ export {
   type CreateLessonInput,
   type UpdateLessonInput,
 } from "./lesson.schema";
+
+// Authentication schemas
+export {
+  signupSchema,
+  loginSchema,
+  type SignupInput,
+  type LoginInput,
+} from "./auth.schema";

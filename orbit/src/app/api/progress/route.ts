@@ -4,11 +4,13 @@ import {
   apiPaginated,
   apiBadRequest,
   apiValidationError,
+  apiForbidden,
   apiCreated,
   apiServerError,
   handlePrismaError,
 } from "@/lib/api-response";
 import { createProgressSchema } from "@/lib/schemas";
+import { withAuth } from "@/lib/auth/middleware";
 
 /**
  * GET /api/progress
@@ -120,6 +122,10 @@ export async function GET(request: Request) {
  * POST /api/progress
  *
  * Creates or updates a progress record for a user-lesson pair (UPSERT).
+ * Requires authentication - users can only update their own progress.
+ *
+ * Request Headers:
+ * - Authorization: Bearer <token>
  *
  * Request Body:
  * {
@@ -130,7 +136,7 @@ export async function GET(request: Request) {
  * }
  *
  * Response: 201 Created with progress data
- * Error: 400 Bad Request (validation), 500 Internal Error
+ * Error: 400 Bad Request (validation), 401 Unauthorized, 403 Forbidden, 500 Internal Error
  *
  * UPSERT Behavior (Offline Sync Support):
  * - If progress record exists (userId + lessonId), it will be UPDATED
@@ -141,7 +147,7 @@ export async function GET(request: Request) {
  * Note: Uses Prisma's composite unique constraint (userId_lessonId)
  * defined in the schema: @@unique([userId, lessonId])
  */
-export async function POST(request: Request) {
+export const POST = withAuth(async (request, _context, authenticatedUserId) => {
   const requestId = generateRequestId();
 
   try {
@@ -154,6 +160,11 @@ export async function POST(request: Request) {
     }
 
     const { userId, lessonId, completed, score = null } = validationResult.data;
+
+    // Authorization check: users can only update their own progress
+    if (userId !== authenticatedUserId) {
+      return apiForbidden("You can only update your own progress", requestId);
+    }
 
     // UPSERT progress record (create or update)
     // This is critical for offline sync - prevents 409 conflicts
@@ -205,4 +216,4 @@ export async function POST(request: Request) {
     // Fallback to server error
     return apiServerError(error, requestId);
   }
-}
+});

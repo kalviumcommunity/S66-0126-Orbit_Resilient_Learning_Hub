@@ -3,13 +3,19 @@ import {
   generateRequestId,
   apiSuccess,
   apiNotFound,
+  apiForbidden,
   apiServerError,
 } from "@/lib/api-response";
+import { withAuth } from "@/lib/auth/middleware";
 
 /**
  * GET /api/users/[userId]/dashboard
  *
  * Optimized dashboard query for student progress overview.
+ * Requires authentication - users can only access their own dashboard.
+ *
+ * Request Headers:
+ * - Authorization: Bearer <token>
  *
  * Optimizations applied:
  * 1. Single query with nested select (no N+1 problem)
@@ -17,14 +23,16 @@ import {
  * 3. Leverages indexes on userId and lesson.order
  * 4. Client-side aggregation for statistics
  */
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ userId: string }> }
-) {
+export const GET = withAuth(async (_request, context, authenticatedUserId) => {
   const requestId = generateRequestId();
 
   try {
-    const { userId } = await params;
+    const { userId } = await context.params;
+
+    // Authorization check: users can only access their own dashboard
+    if (userId !== authenticatedUserId) {
+      return apiForbidden("You can only access your own dashboard", requestId);
+    }
 
     // Single optimized query: Fetch user with all progress in one database call
     const dashboardData = await prisma.user.findUnique({
@@ -112,4 +120,4 @@ export async function GET(
     console.error("Dashboard query failed:", error);
     return apiServerError(error, requestId);
   }
-}
+});

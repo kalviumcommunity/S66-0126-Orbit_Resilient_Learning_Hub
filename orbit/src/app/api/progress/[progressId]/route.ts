@@ -7,8 +7,10 @@ import {
   apiNoContent,
   apiServerError,
   handlePrismaError,
+  apiForbidden,
 } from "@/lib/api-response";
 import { updateProgressSchema } from "@/lib/schemas";
+import { withAuth } from "@/lib/auth/middleware";
 
 /**
  * GET /api/progress/:progressId
@@ -67,6 +69,9 @@ export async function GET(
  *
  * Updates an existing progress record (partial update).
  *
+ * Authentication: Required (JWT token via Authorization header)
+ * Authorization: Users can only update their own progress records
+ *
  * Path Parameters:
  * - progressId: Progress record ID (CUID)
  *
@@ -77,18 +82,16 @@ export async function GET(
  * }
  *
  * Response: 200 OK with updated progress data
- * Error: 400 Bad Request (validation), 404 Not Found, 500 Internal Error
+ * Error: 400 Bad Request (validation), 401 Unauthorized (missing/invalid token),
+ *        403 Forbidden (not owner), 404 Not Found, 500 Internal Error
  *
  * Note: Uses PATCH (not PUT) for partial updates following REST conventions.
  */
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ progressId: string }> }
-) {
+export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
   const requestId = generateRequestId();
 
   try {
-    const { progressId } = await params;
+    const { progressId } = await context.params;
     const body = await request.json();
 
     // Validate request body with Zod schema
@@ -98,6 +101,21 @@ export async function PATCH(
     }
 
     const { completed, score } = validationResult.data;
+
+    // Fetch existing progress record to verify ownership
+    const existingProgress = await prisma.progress.findUnique({
+      where: { id: progressId },
+      select: { userId: true },
+    });
+
+    if (!existingProgress) {
+      return apiNotFound("Progress record", progressId, requestId);
+    }
+
+    // Authorization: Verify user owns this progress record
+    if (existingProgress.userId !== authenticatedUserId) {
+      return apiForbidden("You can only update your own progress", requestId);
+    }
 
     // Build update data object
     const updateData: { completed?: boolean; score?: number | null } = {};
@@ -137,7 +155,7 @@ export async function PATCH(
 
     return apiServerError(error, requestId);
   }
-}
+});
 
 /**
  * DELETE /api/progress/:progressId
