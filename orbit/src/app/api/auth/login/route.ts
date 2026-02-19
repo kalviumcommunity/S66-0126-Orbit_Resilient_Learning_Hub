@@ -29,7 +29,8 @@ import { generateToken } from "@/lib/auth/jwt";
  *     "user": {
  *       "id": "cmlt...",
  *       "name": "Student Name",
- *       "email": "student@example.com"
+ *       "email": "student@example.com",
+ *       "role": "STUDENT"
  *     }
  *   },
  *   "message": "Login successful"
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
         id: true,
         name: true,
         email: true,
+        role: true,
         password: true, // Need password for verification
       },
     });
@@ -90,8 +92,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Generate JWT token
-    const token = generateToken(user.id);
+    // Generate JWT token with role
+    const token = generateToken(user.id, user.role);
 
     // Return user data and token (exclude password)
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

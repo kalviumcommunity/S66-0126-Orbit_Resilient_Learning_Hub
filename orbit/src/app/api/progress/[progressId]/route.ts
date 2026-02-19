@@ -10,7 +10,7 @@ import {
   apiForbidden,
 } from "@/lib/api-response";
 import { updateProgressSchema } from "@/lib/schemas";
-import { withAuth } from "@/lib/auth/middleware";
+import { withRole } from "@/lib/auth/rbac";
 
 /**
  * GET /api/progress/:progressId
@@ -70,7 +70,7 @@ export async function GET(
  * Updates an existing progress record (partial update).
  *
  * Authentication: Required (JWT token via Authorization header)
- * Authorization: Users can only update their own progress records
+ * Authorization: Users can update their own progress, TEACHER/ADMIN can update any progress
  *
  * Path Parameters:
  * - progressId: Progress record ID (CUID)
@@ -85,77 +85,93 @@ export async function GET(
  * Error: 400 Bad Request (validation), 401 Unauthorized (missing/invalid token),
  *        403 Forbidden (not owner), 404 Not Found, 500 Internal Error
  *
- * Note: Uses PATCH (not PUT) for partial updates following REST conventions.
+ * Security: Users can update their own progress, TEACHER/ADMIN can update any progress
  */
-export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
-  const requestId = generateRequestId();
+export const PATCH = withRole<{ progressId: string }>(
+  ["STUDENT", "TEACHER", "ADMIN"],
+  async (request, context, user) => {
+    const requestId = generateRequestId();
 
-  try {
-    const { progressId } = await context.params;
-    const body = await request.json();
+    try {
+      const { progressId } = await context.params;
+      const body = await request.json();
 
-    // Validate request body with Zod schema
-    const validationResult = updateProgressSchema.safeParse(body);
-    if (!validationResult.success) {
-      return apiValidationError(validationResult.error, requestId);
-    }
+      // Validate request body with Zod schema
+      const validationResult = updateProgressSchema.safeParse(body);
+      if (!validationResult.success) {
+        return apiValidationError(validationResult.error, requestId);
+      }
 
-    const { completed, score } = validationResult.data;
+      const { completed, score } = validationResult.data;
 
-    // Fetch existing progress record to verify ownership
-    const existingProgress = await prisma.progress.findUnique({
-      where: { id: progressId },
-      select: { userId: true },
-    });
+      // Fetch existing progress record to verify ownership
+      const existingProgress = await prisma.progress.findUnique({
+        where: { id: progressId },
+        select: { userId: true },
+      });
 
-    if (!existingProgress) {
-      return apiNotFound("Progress record", progressId, requestId);
-    }
+      if (!existingProgress) {
+        return apiNotFound("Progress record", progressId, requestId);
+      }
 
-    // Authorization: Verify user owns this progress record
-    if (existingProgress.userId !== authenticatedUserId) {
-      return apiForbidden("You can only update your own progress", requestId);
-    }
+      // Authorization: Verify user owns this progress record or is TEACHER/ADMIN
+      if (
+        existingProgress.userId !== user.id &&
+        user.role !== "TEACHER" &&
+        user.role !== "ADMIN"
+      ) {
+        return apiForbidden(
+          "You can only update your own progress",
+          "INSUFFICIENT_PERMISSIONS",
+          requestId
+        );
+      }
 
-    // Build update data object
-    const updateData: { completed?: boolean; score?: number | null } = {};
-    if (completed !== undefined) updateData.completed = completed;
-    if (score !== undefined) updateData.score = score;
+      // Build update data object
+      const updateData: { completed?: boolean; score?: number | null } = {};
+      if (completed !== undefined) updateData.completed = completed;
+      if (score !== undefined) updateData.score = score;
 
-    // Update progress record
-    const progress = await prisma.progress.update({
-      where: { id: progressId },
-      data: updateData,
-      include: {
-        lesson: {
-          select: {
-            id: true,
-            title: true,
-            slug: true,
-            order: true,
+      // Update progress record
+      const progress = await prisma.progress.update({
+        where: { id: progressId },
+        data: updateData,
+        include: {
+          lesson: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              order: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+            },
           },
         },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+      });
 
-    return apiSuccess(progress, requestId);
-  } catch (error) {
-    console.error("[API] PATCH /api/progress/:progressId failed:", error);
+      console.log(
+        `[API] Progress ${progressId} updated by ${user.id} (${user.role})`
+      );
 
-    // Try Prisma error handler first
-    const prismaResponse = handlePrismaError(error, requestId);
-    if (prismaResponse) return prismaResponse;
+      return apiSuccess(progress, requestId);
+    } catch (error) {
+      console.error("[API] PATCH /api/progress/:progressId failed:", error);
 
-    return apiServerError(error, requestId);
+      // Try Prisma error handler first
+      const prismaResponse = handlePrismaError(error, requestId);
+      if (prismaResponse) return prismaResponse;
+
+      return apiServerError(error, requestId);
+    }
   }
-});
+);
 
 /**
  * DELETE /api/progress/:progressId

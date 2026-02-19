@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UserRole } from "@prisma/client";
 
 /**
  * Authentication Validation Schemas
@@ -16,6 +17,7 @@ import { z } from "zod";
  * - name: Required, 1-100 characters, trimmed
  * - email: Valid email format, lowercase, trimmed
  * - password: Minimum 8 characters (will be hashed before storage)
+ * - role: Optional, defaults to STUDENT (only ADMIN can create TEACHER/ADMIN users)
  *
  * Note: This schema reuses the same validation rules as createUserSchema
  * for consistency across the application.
@@ -30,6 +32,11 @@ export const signupSchema = z.object({
   email: z.string().email("Invalid email format").toLowerCase().trim(),
 
   password: z.string().min(8, "Password must be at least 8 characters"),
+
+  role: z
+    .nativeEnum(UserRole)
+    .optional()
+    .default("STUDENT" as UserRole),
 });
 
 /**

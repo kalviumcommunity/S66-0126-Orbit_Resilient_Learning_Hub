@@ -10,7 +10,7 @@ import {
   handlePrismaError,
 } from "@/lib/api-response";
 import { createProgressSchema } from "@/lib/schemas";
-import { withAuth } from "@/lib/auth/middleware";
+import { withRole } from "@/lib/auth/rbac";
 
 /**
  * GET /api/progress
@@ -122,7 +122,7 @@ export async function GET(request: Request) {
  * POST /api/progress
  *
  * Creates or updates a progress record for a user-lesson pair (UPSERT).
- * Requires authentication - users can only update their own progress.
+ * Requires authentication - users can only update their own progress, TEACHER/ADMIN can update any.
  *
  * Request Headers:
  * - Authorization: Bearer <token>
@@ -144,76 +144,96 @@ export async function GET(request: Request) {
  * - This prevents 409 Conflict errors when syncing offline data
  * - Critical for rural students who may sync the same progress multiple times
  *
- * Note: Uses Prisma's composite unique constraint (userId_lessonId)
- * defined in the schema: @@unique([userId, lessonId])
+ * Security: Users can update their own progress, TEACHER/ADMIN can update any progress
  */
-export const POST = withAuth(async (request, _context, authenticatedUserId) => {
-  const requestId = generateRequestId();
+export const POST = withRole(
+  ["STUDENT", "TEACHER", "ADMIN"],
+  async (request, _context, user) => {
+    const requestId = generateRequestId();
 
-  try {
-    const body = await request.json();
+    try {
+      const body = await request.json();
 
-    // Validate request body with Zod schema
-    const validationResult = createProgressSchema.safeParse(body);
-    if (!validationResult.success) {
-      return apiValidationError(validationResult.error, requestId);
-    }
+      // Validate request body with Zod schema
+      const validationResult = createProgressSchema.safeParse(body);
+      if (!validationResult.success) {
+        return apiValidationError(validationResult.error, requestId);
+      }
 
-    const { userId, lessonId, completed, score = null } = validationResult.data;
-
-    // Authorization check: users can only update their own progress
-    if (userId !== authenticatedUserId) {
-      return apiForbidden("You can only update your own progress", requestId);
-    }
-
-    // UPSERT progress record (create or update)
-    // This is critical for offline sync - prevents 409 conflicts
-    const progress = await prisma.progress.upsert({
-      where: {
-        userId_lessonId: {
-          userId,
-          lessonId,
-        },
-      },
-      update: {
-        completed,
-        score,
-        updatedAt: new Date(),
-      },
-      create: {
+      const {
         userId,
         lessonId,
         completed,
-        score,
-      },
-      include: {
-        lesson: {
-          select: {
-            id: true,
-            title: true,
-            slug: true,
-            order: true,
+        score = null,
+      } = validationResult.data;
+
+      // Authorization check: users can only update their own progress unless TEACHER/ADMIN
+      if (
+        userId !== user.id &&
+        user.role !== "TEACHER" &&
+        user.role !== "ADMIN"
+      ) {
+        return apiForbidden(
+          "You can only update your own progress",
+          "INSUFFICIENT_PERMISSIONS",
+          requestId
+        );
+      }
+
+      // UPSERT progress record (create or update)
+      // This is critical for offline sync - prevents 409 conflicts
+      const progress = await prisma.progress.upsert({
+        where: {
+          userId_lessonId: {
+            userId,
+            lessonId,
           },
         },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+        update: {
+          completed,
+          score,
+          updatedAt: new Date(),
+        },
+        create: {
+          userId,
+          lessonId,
+          completed,
+          score,
+        },
+        include: {
+          lesson: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              order: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    return apiCreated(progress, "Progress synced successfully", requestId);
-  } catch (error) {
-    console.error("[API] POST /api/progress failed:", error);
+      console.log(
+        `[API] Progress updated for user ${userId} by ${user.id} (${user.role})`
+      );
 
-    // Try Prisma error handler first (handles foreign key violations)
-    const prismaResponse = handlePrismaError(error, requestId);
-    if (prismaResponse) return prismaResponse;
+      return apiCreated(progress, "Progress synced successfully", requestId);
+    } catch (error) {
+      console.error("[API] POST /api/progress failed:", error);
 
-    // Fallback to server error
-    return apiServerError(error, requestId);
+      // Try Prisma error handler first (handles foreign key violations)
+      const prismaResponse = handlePrismaError(error, requestId);
+      if (prismaResponse) return prismaResponse;
+
+      // Fallback to server error
+      return apiServerError(error, requestId);
+    }
   }
-});
+);
