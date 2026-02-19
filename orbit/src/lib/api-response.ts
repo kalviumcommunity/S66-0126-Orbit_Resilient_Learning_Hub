@@ -129,6 +129,7 @@ export function generateRequestId(): string {
  *
  * @param data - Response payload
  * @param requestId - Optional request ID (auto-generated if not provided)
+ * @param message - Optional success message
  * @returns NextResponse with 200 status
  *
  * @example
@@ -139,14 +140,21 @@ export function generateRequestId(): string {
  */
 export function apiSuccess<T>(
   data: T,
-  requestId?: string
-): NextResponse<ApiSuccessResponse<T>> {
-  return NextResponse.json({
+  requestId?: string,
+  message?: string
+): NextResponse {
+  const response: Record<string, unknown> = {
     success: true,
     timestamp: new Date().toISOString(),
     requestId: requestId || generateRequestId(),
     data,
-  });
+  };
+
+  if (message) {
+    response.message = message;
+  }
+
+  return NextResponse.json(response);
 }
 
 /**
@@ -458,13 +466,14 @@ export function apiUnauthorized(
  * Different from 401 (authentication required) vs 403 (authorization failed).
  *
  * @param message - Error message explaining what's forbidden
+ * @param code - Optional specific error code (default: "FORBIDDEN")
  * @param requestId - Optional request ID
  * @returns NextResponse with 403 status
  *
  * @example
  * ```typescript
  * if (progress.userId !== authenticatedUserId) {
- *   return apiForbidden("You can only update your own progress", requestId);
+ *   return apiForbidden("You can only update your own progress", "INSUFFICIENT_PERMISSIONS", requestId);
  * }
  * if (dashboard.userId !== authenticatedUserId) {
  *   return apiForbidden("You can only access your own dashboard", requestId);
@@ -473,6 +482,7 @@ export function apiUnauthorized(
  */
 export function apiForbidden(
   message: string,
+  code: string = ErrorCodes.FORBIDDEN,
   requestId?: string
 ): NextResponse<ApiErrorResponse> {
   return NextResponse.json(
@@ -481,7 +491,7 @@ export function apiForbidden(
       timestamp: new Date().toISOString(),
       requestId: requestId || generateRequestId(),
       error: {
-        code: ErrorCodes.FORBIDDEN,
+        code,
         message,
       },
     },
@@ -699,6 +709,90 @@ export function apiValidationError(
       },
     },
     { status: 400 }
+  );
+}
+
+/**
+ * Returns 429 Too Many Requests (Rate Limit Exceeded)
+ *
+ * Use when user exceeds rate limits.
+ *
+ * @param message - Error message
+ * @param retryAfter - Optional seconds until rate limit resets
+ * @param requestId - Optional request ID
+ * @returns NextResponse with 429 status
+ *
+ * @example
+ * ```typescript
+ * if (requestCount > RATE_LIMIT) {
+ *   return apiRateLimitError("Rate limit exceeded. Please try again later.", 60, requestId);
+ * }
+ * ```
+ */
+export function apiRateLimitError(
+  message: string = "Too many requests. Please try again later.",
+  retryAfter?: number,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  const headers: Record<string, string> = {};
+  if (retryAfter) {
+    headers["Retry-After"] = retryAfter.toString();
+  }
+
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: "RATE_LIMIT_EXCEEDED",
+        message,
+        ...(retryAfter && { details: { retryAfter } }),
+      },
+    },
+    { status: 429, headers }
+  );
+}
+
+/**
+ * Returns 503 Service Unavailable
+ *
+ * Use when service is temporarily unavailable (maintenance, overload, etc.)
+ *
+ * @param message - Error message
+ * @param retryAfter - Optional seconds until service is available
+ * @param requestId - Optional request ID
+ * @returns NextResponse with 503 status
+ *
+ * @example
+ * ```typescript
+ * if (!databaseConnected) {
+ *   return apiServiceUnavailable("Database temporarily unavailable", 30, requestId);
+ * }
+ * ```
+ */
+export function apiServiceUnavailable(
+  message: string = "Service temporarily unavailable. Please try again later.",
+  retryAfter?: number,
+  requestId?: string
+): NextResponse<ApiErrorResponse> {
+  const headers: Record<string, string> = {};
+  if (retryAfter) {
+    headers["Retry-After"] = retryAfter.toString();
+  }
+
+  return NextResponse.json(
+    {
+      success: false,
+      timestamp: new Date().toISOString(),
+      requestId: requestId || generateRequestId(),
+      error: {
+        code: "SERVICE_UNAVAILABLE",
+        message,
+        ...(retryAfter && { details: { retryAfter } }),
+      },
+    },
+    { status: 503, headers }
   );
 }
 

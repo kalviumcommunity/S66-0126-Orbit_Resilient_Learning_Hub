@@ -6,15 +6,23 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
 model User {
   id        String     @id @default(cuid())
   name      String?
   email     String     @unique
   password  String
+  role      UserRole   @default(STUDENT)
   createdAt DateTime   @default(now())
   progress  Progress[]
 
   @@index([email])
+  @@index([role])
 }
 
 model Lesson {

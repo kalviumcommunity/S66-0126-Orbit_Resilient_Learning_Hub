@@ -11,7 +11,7 @@ import {
 } from "@/lib/api-response";
 import { updateUserSchema } from "@/lib/schemas";
 import { hashPassword } from "@/lib/auth/password";
-import { withAuth } from "@/lib/auth/middleware";
+import { withRole } from "@/lib/auth/rbac";
 
 /**
  * GET /api/users/:userId
@@ -93,7 +93,7 @@ export async function GET(
  * PATCH /api/users/:userId
  *
  * Updates an existing user (partial update).
- * Requires authentication - users can only update their own profile.
+ * Requires authentication - users can update their own profile, or ADMIN can update any user.
  *
  * Path Parameters:
  * - userId: User ID (CUID)
@@ -111,62 +111,74 @@ export async function GET(
  * Response: 200 OK with updated user data
  * Error: 400 Bad Request (validation), 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 500 Internal Error
  *
- * Note: Password updates are allowed but should ideally be handled through
- * a dedicated password change endpoint with proper authentication in production.
+ * Security: Users can update their own profile, ADMIN can update any profile
  */
-export const PATCH = withAuth(async (request, context, authenticatedUserId) => {
-  const requestId = generateRequestId();
+export const PATCH = withRole<{ userId: string }>(
+  ["STUDENT", "TEACHER", "ADMIN"],
+  async (request, context, user) => {
+    const requestId = generateRequestId();
 
-  try {
-    const { userId } = await context.params;
+    try {
+      const { userId } = await context.params;
 
-    // Authorization check: users can only update their own profile
-    if (userId !== authenticatedUserId) {
-      return apiForbidden("You can only update your own profile", requestId);
+      // Authorization check: users can only update their own profile unless ADMIN
+      if (userId !== user.id && user.role !== "ADMIN") {
+        return apiForbidden(
+          "You can only update your own profile",
+          "INSUFFICIENT_PERMISSIONS",
+          requestId
+        );
+      }
+
+      const body = await request.json();
+
+      // Validate request body with Zod schema
+      const validationResult = updateUserSchema.safeParse(body);
+      if (!validationResult.success) {
+        return apiValidationError(validationResult.error, requestId);
+      }
+
+      const { name, email, password } = validationResult.data;
+
+      // Build update data object
+      const updateData: { name?: string; email?: string; password?: string } =
+        {};
+      if (name) updateData.name = name;
+      if (email) updateData.email = email;
+      if (password) {
+        // Hash password if provided
+        updateData.password = await hashPassword(password);
+      }
+
+      // Update user
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          createdAt: true,
+        },
+      });
+
+      console.log(
+        `[API] User ${userId} updated by user ${user.id} (${user.role})`
+      );
+
+      return apiSuccess(updatedUser, requestId);
+    } catch (error) {
+      console.error("[API] PATCH /api/users/:userId failed:", error);
+
+      // Try Prisma error handler first (handles P2025 and P2002)
+      const prismaResponse = handlePrismaError(error, requestId);
+      if (prismaResponse) return prismaResponse;
+
+      return apiServerError(error, requestId);
     }
-
-    const body = await request.json();
-
-    // Validate request body with Zod schema
-    const validationResult = updateUserSchema.safeParse(body);
-    if (!validationResult.success) {
-      return apiValidationError(validationResult.error, requestId);
-    }
-
-    const { name, email, password } = validationResult.data;
-
-    // Build update data object
-    const updateData: { name?: string; email?: string; password?: string } = {};
-    if (name) updateData.name = name;
-    if (email) updateData.email = email;
-    if (password) {
-      // Hash password if provided
-      updateData.password = await hashPassword(password);
-    }
-
-    // Update user
-    const user = await prisma.user.update({
-      where: { id: userId },
-      data: updateData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        createdAt: true,
-      },
-    });
-
-    return apiSuccess(user, requestId);
-  } catch (error) {
-    console.error("[API] PATCH /api/users/:userId failed:", error);
-
-    // Try Prisma error handler first (handles P2025 and P2002)
-    const prismaResponse = handlePrismaError(error, requestId);
-    if (prismaResponse) return prismaResponse;
-
-    return apiServerError(error, requestId);
   }
-});
+);
 
 /**
  * DELETE /api/users/:userId

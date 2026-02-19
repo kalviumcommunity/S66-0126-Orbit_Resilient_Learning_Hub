@@ -1935,3 +1935,288 @@ In offline-first education platforms serving rural areas:
 > Maria and her brother Juan share a tablet at their rural school. With authentication, Maria logs in to see her math progress (85% complete), while Juan logs in later to see his science lessons (60% complete). The system prevents Maria from accidentally modifying Juan's progress, and vice versa. When they sync their offline work, each student's data is correctly attributed to their account.
 
 ---
+
+## 🛡️ Role-Based Access Control (RBAC)
+
+### Overview
+
+To enable **fine-grained authorization** and **secure multi-role access**, we implemented a comprehensive Role-Based Access Control (RBAC) system with three distinct roles: STUDENT, TEACHER, and ADMIN. This module extends the JWT authentication system with role claims and provides middleware for protecting endpoints based on user roles.
+
+### Problem Solved
+
+**Before (Module 2.20):**
+- ❌ Single authentication tier (authenticated vs. unauthenticated only)
+- ❌ No differentiation between user types (students, teachers, admins)
+- ❌ Anyone authenticated could create/modify lessons
+- ❌ No administrative capabilities for user management
+- ❌ No teacher-specific features (content creation, student monitoring)
+
+**After (Module 2.21):**
+- ✅ **Three-tier role system** (STUDENT, TEACHER, ADMIN)
+- ✅ **Role claims in JWT tokens** (validated on every request)
+- ✅ **Hierarchical permissions** (ADMIN > TEACHER > STUDENT)
+- ✅ **Protected lesson creation** (TEACHER/ADMIN only)
+- ✅ **Granular authorization** using withRole() HOC
+- ✅ **Privilege escalation prevention** (only ADMIN can create TEACHER/ADMIN users)
+
+### Role Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                           ADMIN                             │
+│  Full system access, user management, all operations       │
+│  • Create/modify/delete lessons                            │
+│  • Create TEACHER/ADMIN accounts                           │
+│  • View all user dashboards                                │
+│  • Manage all progress records                             │
+│  • Delete users and data                                   │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+         ┌───────────▼──────────┐
+         │      TEACHER         │
+         │  Content management  │
+         │  • Create/modify lessons   │
+         │  • View student dashboards │
+         │  • Manage student progress │
+         └───────────┬──────────┘
+                     │
+         ┌───────────▼──────────┐
+         │      STUDENT         │
+         │   Basic access       │
+         │  • View lessons      │
+         │  • Own dashboard     │
+         │  • Own progress      │
+         └──────────────────────┘
+```
+
+### Endpoint Protection Matrix
+
+We applied role-based protection to all relevant endpoints:
+
+| Endpoint | Method | Allowed Roles | Authorization Logic |
+|----------|--------|---------------|---------------------|
+| **Auth Endpoints** |
+| /api/auth/signup | POST | Public | Prevent privilege escalation (only ADMIN can create TEACHER/ADMIN) |
+| /api/auth/login | POST | Public | Returns role in response |
+| **Lesson Endpoints** |
+| /api/lessons | GET | Public | Browse lessons (no auth required) |
+| /api/lessons | POST | TEACHER, ADMIN | Create lessons |
+| /api/lessons/[id] | GET | Public | View lesson details |
+| /api/lessons/[id] | PATCH | TEACHER, ADMIN | Modify lessons |
+| /api/lessons/[id] | DELETE | ADMIN | Delete lessons (admin only) |
+| **User Endpoints** |
+| /api/users/[userId] | PATCH | Self or ADMIN | Users can only modify their own profile |
+| /api/users/[userId]/dashboard | GET | Self or TEACHER or ADMIN | Students can only view own dashboard |
+| **Progress Endpoints** |
+| /api/progress | POST | Self or TEACHER or ADMIN | Students can only create own progress |
+| /api/progress/[id] | PATCH | Self or TEACHER or ADMIN | Teachers can modify student progress |
+
+### Test Results
+
+```bash
+./test-rbac-simple.sh
+```
+
+**Output:**
+```
+=== Module 2.21: RBAC Test Suite ===
+
+✓ Test 1: Creating STUDENT user
+✓ Test 2: Privilege escalation prevented
+✓ Test 3: Student forbidden from creating lessons
+✓ Test 4: Role included in login response
+✓ Test 5: Public endpoint accessible
+
+=== Test Summary ===
+Total: 5 | Passed: 5 | Failed: 0
+```
+
+---
+
+## 📊 Centralized Error Handling & Structured Logging
+
+### Overview
+
+To enable **production observability**, **security auditing**, and **efficient debugging** in low-connectivity environments, we implemented comprehensive structured logging with Pino and centralized error handling with sensitive data redaction.
+
+### Problem Solved
+
+**Before:**
+- ❌ Inconsistent error handling across endpoints
+- ❌ Stack traces exposed in production (security risk)
+- ❌ No request tracing (debugging production issues was difficult)
+- ❌ Sensitive data (passwords, tokens) potentially leaked in logs
+- ❌ No structured logging (difficult to parse logs for monitoring tools)
+
+**After:**
+- ✅ **Pino structured logging** with JSON format for log aggregation
+- ✅ **Automatic sensitive data redaction** (passwords, tokens, auth headers)
+- ✅ **Request tracing** with unique request IDs
+- ✅ **Production-safe error responses** (stack traces hidden in production)
+- ✅ **Centralized error classes** (ValidationError, AuthenticationError, etc.)
+- ✅ **Request/response logging** via middleware with timing metrics
+
+### Logging Architecture
+
+#### Pino Configuration
+
+```typescript
+// src/lib/logger.ts
+export const logger = pino({
+  level: isDevelopment ? "debug" : "info",
+  
+  // Automatic sensitive field redaction
+  redact: {
+    paths: [
+      "password",
+      "*.password",
+      "req.headers.authorization",
+      "req.headers.cookie",
+      "token",
+      "*.token",
+      "accessToken",
+      "refreshToken",
+    ],
+    censor: "[REDACTED]",
+  },
+  
+  // Pretty print in development, JSON in production
+  transport: isDevelopment ? { target: "pino-pretty" } : undefined,
+});
+```
+
+### Request Tracing
+
+Every request includes a unique requestId for end-to-end tracing:
+
+**Example Log Output (Development):**
+```
+[10:45:23] INFO: Incoming GET /api/lessons
+    requestId: "8c36f47a-cea7-4de6-a92a-4bebf19c1d01"
+    method: "GET"
+    path: "/api/lessons"
+    duration: 37ms
+```
+
+**Example Log Output (Production - JSON):**
+```json
+{
+  "level": 30,
+  "time": 1708344323498,
+  "requestId": "8c36f47a-cea7-4de6-a92a-4bebf19c1d01",
+  "method": "GET",
+  "path": "/api/lessons",
+  "duration": 37,
+  "msg": "Incoming GET /api/lessons"
+}
+```
+
+### Error Handling System
+
+We created centralized error classes (`src/lib/error-handler.ts`):
+
+```typescript
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    public code: string,
+    message: string,
+    public isOperational = true
+  ) {
+    super(message);
+  }
+}
+
+// Specific error classes
+export class ValidationError extends AppError { /* ... */ }
+export class AuthenticationError extends AppError { /* ... */ }
+export class AuthorizationError extends AppError { /* ... */ }
+export class NotFoundError extends AppError { /* ... */ }
+export class ConflictError extends AppError { /* ... */ }
+export class RateLimitError extends AppError { /* ... */ }
+export class ServiceUnavailableError extends AppError { /* ... */ }
+```
+
+### Production-Safe Error Responses
+
+#### Development Mode (Full Details)
+```json
+{
+  "success": false,
+  "requestId": "req_xyz789",
+  "error": {
+    "code": "INTERNAL_SERVER_ERROR",
+    "message": "Cannot read property 'id' of undefined",
+    "stack": "TypeError: Cannot read property 'id' of undefined\n    at handler ..."
+  }
+}
+```
+
+#### Production Mode (Redacted Stack Trace)
+```json
+{
+  "success": false,
+  "requestId": "req_xyz789",
+  "error": {
+    "code": "INTERNAL_SERVER_ERROR",
+    "message": "An unexpected error occurred"
+  }
+}
+```
+
+### Test Results
+
+```bash
+./test-error-handling-simple.sh
+```
+
+**Output:**
+```
+=== Module 2.22: Error Handling & Logging Test Suite ===
+
+✓ Test 1: Validation error returned 400
+✓ Test 2: Invalid token returned 401
+✓ Test 3: Insufficient permissions returned 403
+✓ Test 4: Invalid resource returned 404
+✓ Test 5: requestId present in response
+✓ Test 6: Password not leaked in error response
+
+=== Test Summary ===
+Total: 6 | Passed: 6 | Failed: 0
+```
+
+### Implementation Statistics
+
+**Module 2.21 (RBAC):**
+- Database Migration: 1 migration (add UserRole enum and role field)
+- New Files: 2 files (rbac.ts, rbac.d.ts)
+- Modified Files: 8 files (JWT, schemas, auth/lesson/user/progress endpoints)
+- Endpoints Protected: 7 route files
+- Test Scenarios: 5+ tests ✅ All passing
+
+**Module 2.22 (Logging & Errors):**
+- Dependencies: pino@9.7.0, pino-pretty@13.0.0
+- New Files: 2 files (logger.ts, error-handler.ts)
+- Modified Files: 3 files (middleware.ts, api-response.ts)
+- Error Classes: 7 operational error classes
+- Redacted Fields: 7 sensitive field patterns
+- Test Scenarios: 6+ tests ✅ All passing
+
+### Why This Matters for Rural Education
+
+**RBAC Benefits:**
+1. **Content Quality Control:** Only qualified teachers can create lessons
+2. **Student Protection:** Students cannot modify other students' progress
+3. **Teacher Efficiency:** Teachers can monitor all student dashboards
+4. **Accountability:** Clear role separation enables audit trails
+
+**Logging & Error Handling Benefits:**
+1. **Remote Debugging:** Structured logs enable debugging without physical server access
+2. **Security Monitoring:** Automated alerts for suspicious activity
+3. **Performance Optimization:** Request duration logs help identify slow endpoints
+4. **Data Privacy:** Automatic redaction ensures student data isn't leaked in logs
+
+**Real-World Scenario:**
+> Teacher Ana creates a new math lesson (TEACHER role). Students Maria and Carlos can view the lesson but cannot modify it. When Maria's progress sync fails, the requestId in the error message allows IT support to trace the full request lifecycle in logs, identify a database timeout, and advise retry. The system automatically redacts Maria's password from logs, ensuring her account security is maintained.
+
+---

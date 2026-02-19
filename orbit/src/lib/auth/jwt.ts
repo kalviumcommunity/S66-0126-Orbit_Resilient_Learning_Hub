@@ -1,5 +1,6 @@
 import * as jwt from "jsonwebtoken";
 import type { StringValue } from "ms";
+import type { UserRole } from "@prisma/client";
 
 /**
  * JWT Utility for Token Generation and Verification
@@ -10,7 +11,7 @@ import type { StringValue } from "ms";
  * Security considerations:
  * - JWT_SECRET must be cryptographically secure (64+ characters)
  * - Tokens expire after JWT_EXPIRES_IN (default: 1 hour)
- * - Minimal payload (user ID only) for smaller token size
+ * - Payload includes userId and role for RBAC
  * - Verification handles all error cases gracefully
  *
  * @module lib/auth/jwt
@@ -18,10 +19,11 @@ import type { StringValue } from "ms";
 
 /**
  * JWT payload structure
- * Contains only the user ID for minimal token size
+ * Contains user ID and role for authentication and authorization
  */
 export interface JWTPayload {
   userId: string;
+  role: UserRole;
   iat?: number; // Issued at (auto-added by jsonwebtoken)
   exp?: number; // Expiration (auto-added by jsonwebtoken)
 }
@@ -51,19 +53,21 @@ function getJWTSecret(): string {
  * Uses HS256 algorithm and includes expiration time from environment.
  *
  * @param userId - User's CUID from database
+ * @param role - User's role (STUDENT, TEACHER, ADMIN)
  * @returns Signed JWT token string
  *
  * @example
  * ```typescript
- * const token = generateToken(user.id);
+ * const token = generateToken(user.id, user.role);
  * // Returns: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  * ```
  */
-export function generateToken(userId: string): string {
+export function generateToken(userId: string, role: UserRole): string {
   const secret = getJWTSecret();
 
   const payload: JWTPayload = {
     userId,
+    role,
   };
 
   const options: jwt.SignOptions = {
@@ -80,13 +84,14 @@ export function generateToken(userId: string): string {
  * Handles all error cases gracefully (no throwing).
  *
  * @param token - JWT token string to verify
- * @returns Decoded payload with userId, or null if invalid
+ * @returns Decoded payload with userId and role, or null if invalid
  *
  * @example
  * ```typescript
  * const payload = verifyToken(token);
  * if (payload) {
  *   console.log("User ID:", payload.userId);
+ *   console.log("Role:", payload.role);
  * } else {
  *   console.log("Invalid or expired token");
  * }
@@ -99,8 +104,8 @@ export function verifyToken(token: string): JWTPayload | null {
       algorithms: ["HS256"],
     }) as JWTPayload;
 
-    // Ensure userId exists in payload
-    if (!decoded.userId) {
+    // Ensure userId and role exist in payload
+    if (!decoded.userId || !decoded.role) {
       return null;
     }
 
