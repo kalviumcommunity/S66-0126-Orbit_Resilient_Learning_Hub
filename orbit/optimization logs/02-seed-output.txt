@@ -1,8 +1,0 @@
-
-> orbit@0.1.0 seed
-> tsx prisma/seed.ts
-
-[dotenv@17.3.1] injecting env (3) from .env.local -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
-🌱 Starting seeding...
-📚 Inserting lessons...
-✅ Seeded 10 lessons and 1 user.

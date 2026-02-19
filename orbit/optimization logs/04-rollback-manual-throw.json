@@ -1,1 +1,0 @@
-{"testCase":"manual-throw","timestamp":"2026-02-18T10:36:48.237Z","success":false,"error":null,"rollbackVerified":true,"details":{"userIdCreated":"cmlrwdlo900125isb6efoay4u","userExistsAfterRollback":false,"explanation":"Transaction rolled back successfully - no user created"},"expectedError":true,"thrownError":"Business logic validation failed: simulated error"}
